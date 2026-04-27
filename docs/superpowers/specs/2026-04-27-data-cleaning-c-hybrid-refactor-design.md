@@ -245,6 +245,7 @@ class WebSearchCache:
 - Per-run lifetime by default (in-memory dict). SQLite-backed extension is a one-class addition with the same interface.
 - Errors from Tavily are *not* cached — failed calls retry on next request.
 - Stats logged at end of run as part of `CleaningRunReport.cache_stats`.
+- **Thread-safe from day one.** `get`/`put`/`web_search_cached` guard mutation with a `threading.Lock`. The cache is single-threaded under C-Hybrid, but the lock is required from the start so that the A migration's parallelism is safe without changing this class.
 
 **Replaces**: the `web_search` function currently at module scope in `multi_turn_conversation.py`. The tool definition Claude sees is unchanged; only the implementation routes through the cache.
 
@@ -317,7 +318,7 @@ LLM_BACKEND_DEEP=anthropic-sonnet      # optional override
 
 **Caching behavior**:
 - `cache_control={"type": "ephemeral"}` is added to the `system` block and the `tools` block when `supports_cache_control=True`. Portable form (works on OpenRouter→Anthropic and native Anthropic).
-- 4096-token threshold awareness: when `supports_cache_control=True`, the client logs a warning if `system` + `tools` is under threshold (`"system+tools below 4096 tokens — caching will not engage on Haiku 4.5"`).
+- 4096-token threshold check is performed **at startup**, not per-request. When `build_clients()` constructs a tier with `supports_cache_control=True`, it estimates the token count of the system+tools blocks once and logs a startup-time warning if under threshold (`"system+tools for tier <name> below 4096 tokens — caching will not engage on Haiku 4.5"`). Token estimation uses `len(text) // 4` as a fast approximation; precise tokenization is not worth the dependency. Per-request runtime checks are not performed.
 - Top-level `cache_control` kwarg from the current code is removed (silent no-op).
 
 ### 5.6 Public API + REPL
@@ -413,11 +414,12 @@ User: `CLEAN all uncleaned data`
 2. **fetch_records** → 100 records: 40 CA, 25 USA, 20 NL, 10 MX, 5 unknown.
 3. **pre_clean_batch** → all 100 normalized (name/city/case/abbrev/phone/postal-spacing). 30 records fully resolved by Python (postal complete + municipality present), 70 need research, 5 of those have no country.
 4. **group_by_country** → `{'CA': [...32], 'USA': [...18], 'NL': [...12], 'MX': [...8], None: [...5]}`. Records grouped after pre-clean; the 30 fully-resolved skip step 5 entirely.
-5. **For each non-None group, instantiate `CleaningAgent(country=…, llm_client=clients.standard, …)` and call `.process(group)`**. Each agent runs its own research loop with the per-country prompt and `web_search` tool. Cache hits dedupe shared FSA/ZIP lookups across records. The 5 unknown-country records skip the per-country agents and go straight to escalation.
-6. **For each `CleaningOutput`**, evaluate `needs_escalation()`. ~5% trigger escalation; `EscalationAgent.investigate(...)` is called with `prior_search_log` so it doesn't re-run searches.
-7. **merge_results** → per-record final dict.
-8. **persist** → for each record, one transaction writing `cleaned_data` + any `flags` + the `audit_log` rows. Failures roll back that record only.
-9. **Return `CleaningRunReport`** with counts, timing, cache stats, flags-by-type, and human-readable summary.
+5. **For each non-None group, instantiate `CleaningAgent(country=…, llm_client=clients.standard, …)` and call `.process(group)`**. Each agent runs its own research loop with the per-country prompt and `web_search` tool. **Inside `.process()`**, after the research loop completes for each record, the agent itself calls `needs_escalation(output)` and, if non-empty, calls `self.escalator.investigate(...)` with `prior_search_log` so it doesn't re-run searches. Cache hits dedupe shared FSA/ZIP lookups across records. The 5 unknown-country records skip the per-country agents and go straight to a dedicated escalation pass driven by the orchestrator.
+6. **merge_results** → per-record final dict, combining pre-cleaner output with the agent's CleaningOutput (which may already include escalation results).
+7. **persist** → for each record, one transaction writing `cleaned_data` + any `flags` + the `audit_log` rows. Failures roll back that record only.
+8. **Return `CleaningRunReport`** with counts, timing, cache stats, flags-by-type, and human-readable summary.
+
+**Escalation trigger lives in the agent, not the orchestrator.** The agent owns the search log and is best positioned to hand it off to the escalator without re-serialising. The orchestrator's only escalation responsibility is the unknown-country case (records with no country → no per-country agent → orchestrator dispatches them to the escalator directly).
 
 REPL prints `report.summary_text`.
 
