@@ -381,7 +381,7 @@ class DataCleaningAgent:
         Returns (all_pre_cleaned, needs_research) where needs_research is the
         subset that still require Claude for postal/municipality lookup.
         """
-        from pre_cleaner import pre_clean_record, needs_research
+        from cleaning.pre_cleaner import pre_clean_record, needs_research
         pre_cleaned = [pre_clean_record(r) for r in records]
         research_needed = [r for r in pre_cleaned if needs_research(r)]
         return pre_cleaned, research_needed
