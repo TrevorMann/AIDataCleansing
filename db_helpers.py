@@ -212,3 +212,80 @@ def query_records(
         return [dict(row) for row in cursor.fetchall()]
     finally:
         conn.close()
+
+
+def insert_flag(
+    db_path: str,
+    raw_data_id: int,
+    flag_type: str,
+    severity: str,
+    reason: str,
+    raised_by: str,
+    cleaned_data_id: Optional[int] = None,
+) -> int:
+    """Insert a flag. Returns the row ID."""
+    conn = get_db_connection(db_path)
+    try:
+        cursor = conn.cursor()
+        cursor.execute('''
+        INSERT INTO flags (raw_data_id, cleaned_data_id, flag_type, severity, reason, raised_by)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ''', (raw_data_id, cleaned_data_id, flag_type, severity, reason, raised_by))
+        conn.commit()
+        return cursor.lastrowid
+    finally:
+        conn.close()
+
+
+def update_flag_resolution(
+    db_path: str,
+    flag_id: int,
+    resolved_by: str,
+    note: Optional[str] = None,
+) -> bool:
+    """Mark a flag as resolved. Returns True if a row was updated."""
+    conn = get_db_connection(db_path)
+    try:
+        cursor = conn.cursor()
+        cursor.execute('''
+        UPDATE flags SET resolved_at = CURRENT_TIMESTAMP, resolved_by = ?, resolution_note = ?
+        WHERE id = ? AND resolved_at IS NULL
+        ''', (resolved_by, note, flag_id))
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+def query_flags(
+    db_path: str,
+    only_unresolved: bool = True,
+    raw_data_id: Optional[int] = None,
+    flag_type: Optional[str] = None,
+    limit: int = 100,
+) -> List[Dict]:
+    """Query flags. Defaults to unresolved only."""
+    where = []
+    params: list = []
+    if only_unresolved:
+        where.append("resolved_at IS NULL")
+    if raw_data_id is not None:
+        where.append("raw_data_id = ?")
+        params.append(raw_data_id)
+    if flag_type is not None:
+        where.append("flag_type = ?")
+        params.append(flag_type)
+
+    sql = "SELECT * FROM flags"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY raised_at DESC LIMIT ?"
+    params.append(limit)
+
+    conn = get_db_connection(db_path)
+    try:
+        cursor = conn.cursor()
+        cursor.execute(sql, params)
+        return [dict(r) for r in cursor.fetchall()]
+    finally:
+        conn.close()
