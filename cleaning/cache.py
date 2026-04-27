@@ -8,7 +8,6 @@ import json
 import os
 import re
 import threading
-import urllib.parse
 import urllib.request
 
 
@@ -84,12 +83,11 @@ class WebSearchCache:
             self._store[key] = result
 
     def web_search_cached(self, query: str, max_results: int = 5) -> str:
-        cached = self.get(query)
-        if cached is not None:
-            with self._lock:
-                self._hits += 1
-            return cached
+        key = _normalize_query(query)
         with self._lock:
+            if key in self._store:
+                self._hits += 1
+                return self._store[key]
             self._misses += 1
         result = _tavily_call(query, max_results)
         self.put(query, result)

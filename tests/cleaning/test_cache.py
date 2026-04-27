@@ -55,3 +55,23 @@ def test_thread_safety_no_lost_writes(mock_tavily):
     for t in threads: t.join()
     assert errors == []
     assert c.stats()["queries_cached"] == 50 * 20
+
+
+def test_stats_consistent_under_contention(mock_tavily):
+    """Concurrent queries to the same key must not produce negative or impossible stats."""
+    from cleaning.cache import WebSearchCache
+    mock_tavily.side_effect = lambda q, max_results=5: f"result:{q}"
+    c = WebSearchCache()
+    results = []
+    def worker():
+        results.append(c.web_search_cached("same_query"))
+    threads = [threading.Thread(target=worker) for _ in range(20)]
+    for t in threads: t.start()
+    for t in threads: t.join()
+    stats = c.stats()
+    # All threads return the correct result
+    assert all(r == "result:same_query" for r in results)
+    # Total hits + misses == total calls
+    assert stats["hits"] + stats["misses"] == 20
+    # At most one query cached
+    assert stats["queries_cached"] == 1
