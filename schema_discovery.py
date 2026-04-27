@@ -66,3 +66,19 @@ def get_table_columns(db_path: str, table_name: str) -> List[str]:
     """Get list of column names for a table."""
     schema = get_table_schema(db_path, table_name)
     return [col['name'] for col in schema]
+
+
+def get_column_metadata(db_path: str, table_name: str) -> Dict[str, str]:
+    """Return {column_name: description} for a table from the column_metadata table."""
+    conn = get_db_connection(db_path)
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            'SELECT column_name, description FROM column_metadata WHERE table_name = ?',
+            (table_name,)
+        )
+        return {row['column_name']: row['description'] for row in cursor.fetchall() if row['description']}
+    except Exception:
+        return {}
+    finally:
+        conn.close()

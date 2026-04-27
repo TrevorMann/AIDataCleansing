@@ -6,9 +6,19 @@ import urllib.request
 import urllib.parse
 from anthropic import Anthropic
 from database import init_db, get_db_connection
-from db_helpers import insert_raw_data, get_all_raw_data, insert_cleaned_data, insert_audit_log
+from db_helpers import (
+    insert_raw_data, get_all_raw_data, insert_cleaned_data, insert_audit_log,
+    update_raw_data, update_cleaned_data, delete_raw_data,
+    get_cleaned_data_for_raw, query_records, get_raw_data_by_id,
+)
 from schema_discovery import format_schema_for_prompt
 from data_cleaning_agent import DataCleaningAgent
+from guardrails import (
+    GuardrailError, check_age, check_country, check_protected_fields,
+    check_no_wildcard_update, check_delete_confirmation, check_delete_not_bulk,
+    check_usa_state, check_nl_phone_format,
+)
+from prompts import build_system_prompt
 
 # Read .env file without requiring python-dotenv
 def load_env():
@@ -166,108 +176,74 @@ client = Anthropic(
     api_key=os.getenv("OPENROUTER_API_KEY"),
 )
 
-_BASE_SYSTEM_PROMPT = """You are an expert at data engineering your role is to clean and enhance data for the real estate space and personal information.
-You receive data in the following format based on the database schema below:
-
-{schema}
-
-STEP 0 — CROSS-PROVINCE SANITY CHECK (run before any web search):
-Canadian postal codes encode province in the first letter. Check this BEFORE anything else:
-  A = Newfoundland & Labrador | B = Nova Scotia | C = Prince Edward Island
-  E = New Brunswick | G/H/J = Quebec | K/L/M/N/P = Ontario
-  R = Manitoba | S = Saskatchewan | T = Alberta | V = British Columbia
-  X = NWT/Nunavut | Y = Yukon
-If the postal code's first letter does NOT match the record's province/city, flag immediately:
-  "CROSS-PROVINCE MISMATCH: [postal code] belongs to [actual province], record says [stated province/city]. REQUIRES MANUAL REVIEW."
-Do NOT attempt to web search or correct — just flag and move on. This catches obvious data entry errors (e.g. V6B in a Toronto/Ontario record) without wasting a search.
-
-POSTAL CODE CLASSIFICATION (determine type before any action):
-There are three states — handle each differently:
-
-  FULL postal code (6 characters, e.g. M6H 1E7, V6B 2W9):
-  - NEVER modify or change. Treat as authoritative.
-  - Web search to VERIFY it matches address + city.
-  - If mismatch: flag as "POSTAL CODE MISMATCH: [code] does not match [address], [city]. KEEP ORIGINAL — requires review."
-  - If confirmed: record confidence score in validation notes.
-
-  PARTIAL postal code / FSA only (3 characters, e.g. M6H, V6B):
-  - This is INCOMPLETE data, not a valid postal code. Must be resolved.
-  - Web search "[street address] [FSA] [city]" to find the full postal code.
-  - CRITICAL: The same street name can exist in multiple FSA areas (e.g. Muir Avenue exists
-    under M6H AND M9L — these are different streets in different neighbourhoods). You MUST
-    confirm which specific address matches before setting municipality or full code.
-  - If web search returns exactly one confident match: complete the postal code and note
-    "FSA [X] completed to [full code] via web search. Confidence: HIGH."
-  - If ambiguous or multiple matches: set postal code to the FSA + "?" (e.g. "M6H ?"),
-    set municipality to 'N/A', and flag "FSA AMBIGUOUS: multiple addresses found — requires manual review."
-  - Never guess or assume the full code without a confirmed web result.
-
-  Missing postal code:
-  - Web search "[street address] [city] [province] postal code" to find it.
-  - Only populate if search returns a single confident result.
-  - If uncertain: leave as 'N/A' and note why.
-
-MUNICIPALITY MAPPING (REAL ESTATE FOCUS):
-Municipality MUST be filled in for EVERY record using the REAL ESTATE name — the neighbourhood
-people actually search when looking for properties. This may differ from administrative boundaries
-(e.g. "North York" not "Toronto", "Little Italy" not "Dufferin").
-
-Process — follow in order:
-1. Run cross-province check (Step 0) first. If flagged, set municipality to 'N/A' and skip remaining steps.
-2. Determine postal code state (full / partial / missing) per rules above.
-3. If full postal code: web search "[full postal code] real estate neighbourhood" to confirm municipality.
-4. If partial FSA: web search "[address] [FSA] [city]" — resolve full postal code first, then derive municipality.
-   - Remember: same address name in different FSA zones = different streets and different municipalities.
-5. If missing postal code: web search "[address] [city] [province]" — resolve postal code first, then municipality.
-6. Final cross-check: after cleaning, verify City + Address + Postal Code + Municipality all align.
-   Record a confidence score (HIGH / MEDIUM / LOW) in validation notes.
-   Flag any inconsistency even if you cannot resolve it.
-
-When you cannot confidently determine a value:
-- Postal Code: keep original (if full) or 'N/A' (if partial/missing after failed search)
-- Municipality: 'N/A' with explanation — this should be rare
-- City/Address: populate with best available information
-- State/Province or Country: always use full names
-
-CRITICAL: NEVER change a full postal code. Update surrounding fields to align with it, not the other way around.
+SYSTEM_PROMPT = build_system_prompt('CA', schema=DB_SCHEMA)
 
 
-The first row is the header, and the rest are data rows. Clean the data based on these guidelines:
+def detect_country_scope(user_query: str) -> str | None:
+    """
+    Return the canonical country code from a user query, or None if ambiguous/multi-country.
+    Returns: 'CA', 'USA', 'NL', 'MX', 'JP', or None
+    """
+    query_lower = user_query.lower()
 
-<Phone Validation Rules>
-NORTH AMERICAN (US/Canada/Mexico):
-- Valid formats: (123) 456-7890, 123-456-7890, 1231234567, +1-123-456-7890
-- Must be exactly 10 digits (country code 1 is optional)
-- Area code cannot start with 0 or 1
-- Standardize to: (123) 456-7890 format
-- Example valid: (416) 555-0123 (Toronto), (514) 555-0123 (Montreal), (555) 123-4567 (US)
+    if 'north american' in query_lower:
+        return None
 
-EUROPEAN:
-- Valid formats: +44 20 XXXX XXXX, +33 X XX XX XX XX, +49 XXX XXXXXXX, etc.
-- the + is optional and should be added when not present as long as rest of formatting is aligned
-- Minimum 8 digits total including country code
-- Standardize to: +[country code] [number] format
-- Examples valid: +44 20 7123 4567 (UK), +33 1 23 45 67 89 (France), +49 30 12345678 (Germany)
+    country_keywords = {
+        'CA': ['canadian', 'canada'],
+        'USA': ['american', 'usa', 'united states', 'u.s.'],
+        'NL': ['dutch', 'netherlands', 'holland', 'european', 'europe'],
+        'MX': ['mexican', 'mexico'],
+        'JP': ['japanese', 'japan'],
+    }
 
-VALIDATION RULES:
-- If phone doesn't match NA or EU format, use 'N/A'
-- Always validate format first
-- Include country code in final output
-- Use 'N/A' for any invalid phone numbers
-</Phone Validation Rules>
+    matched = [code for code, keywords in country_keywords.items()
+               if any(kw in query_lower for kw in keywords)]
 
-GENERAL CLEANING RULES:
-1. The 'postalcode' column should follow the standard of the country postal code format (A1A 1A1 for Canada, XXX XX for US, xxxx xx for Netherlands, etc.).
-2. You must validate the postalcode is for that address, do not guess.
-3. Use other data fields to fill in municipality, but use 'N/A' if unsure.
-4. Standardize 'state/province' to be the full name (e.g. Ontario, not ON).
-5. Standardize 'country' to be the full name (e.g. Canada, not CA or USA).
-6. Validate and standardize phone numbers according to the rules above. Use 'N/A' if invalid.
-7. Standardize street names in address (example: St. -> Street, Ave -> Avenue, Rd. -> Road, etc.).
-8. YOU MUST FILL IN MUNICIPALITY if it is blank, or give reason why you did not fill in Municipality.  use websearch if you have to verify.
-"""
+    return matched[0] if len(matched) == 1 else None
 
-SYSTEM_PROMPT = _BASE_SYSTEM_PROMPT.format(schema=DB_SCHEMA)
+
+_SQLITE_TO_JSON_TYPE = {
+    'TEXT': 'string',
+    'INTEGER': 'integer',
+    'REAL': 'number',
+    'NUMERIC': 'number',
+    'BLOB': 'string',
+    'TIMESTAMP': 'string',
+}
+
+# Columns that are auto-managed and should never appear in insert/update tool schemas
+_AUTO_MANAGED = {'id', 'imported_at', 'cleaned_at', 'imported_by', 'cleaned_by', 'applied_at', 'applied_by'}
+
+
+def _build_table_properties(table_name: str, exclude: set = None) -> dict:
+    """
+    Build a JSON Schema properties dict from the live DB schema + column_metadata descriptions.
+    Adding a column to the table or updating its description in column_metadata is enough —
+    no Python changes needed.
+    """
+    from schema_discovery import get_table_schema, get_column_metadata
+    exclude = (exclude or set()) | _AUTO_MANAGED
+    columns = get_table_schema(DB_PATH, table_name)
+    descriptions = get_column_metadata(DB_PATH, table_name)
+    props = {}
+    for col in columns:
+        if col['name'] in exclude:
+            continue
+        sqlite_type = col['type'].upper().split('(')[0].strip()
+        json_type = _SQLITE_TO_JSON_TYPE.get(sqlite_type, 'string')
+        entry = {'type': json_type}
+        if col['name'] in descriptions:
+            entry['description'] = descriptions[col['name']]
+        props[col['name']] = entry
+    return props
+
+
+def _column_names(table_name: str, exclude: set = None) -> list[str]:
+    """Return editable column names for a table (excluding auto-managed cols)."""
+    from schema_discovery import get_table_schema
+    exclude = (exclude or set()) | _AUTO_MANAGED
+    return [c['name'] for c in get_table_schema(DB_PATH, table_name) if c['name'] not in exclude]
 
 
 class DataCleaningConversation:
@@ -279,7 +255,7 @@ class DataCleaningConversation:
         self.turn_count = 0
 
     def define_tools(self) -> list:
-        """Define tools for Claude to call. Includes local validation functions + OpenRouter's server-side websearch."""
+        """Define tools for Claude to call. Schemas for CRUD tools are built from the live DB schema."""
         return [
             {
                 "name": "validate_na_phone",
@@ -341,7 +317,64 @@ class DataCleaningConversation:
                     },
                     "required": ["query"]
                 }
-            }
+            },
+            {
+                "name": "insert_record",
+                "description": "Insert a new record into the raw_data table.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": _build_table_properties('raw_data'),
+                    "required": ["name"]
+                }
+            },
+            {
+                "name": "update_record",
+                "description": (
+                    "Update specific fields on a raw_data or cleaned_data record by ID. "
+                    "Only specify the fields you want to change. "
+                    f"raw_data editable fields: {_column_names('raw_data')}. "
+                    f"cleaned_data editable fields: {_column_names('cleaned_data', exclude={'raw_data_id'})}."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "table": {"type": "string", "enum": ["raw_data", "cleaned_data"], "description": "Which table to update"},
+                        "record_id": {"type": "integer", "description": "The ID of the record to update"},
+                        "fields": {"type": "object", "description": "Key-value pairs of fields to update"}
+                    },
+                    "required": ["table", "record_id", "fields"]
+                }
+            },
+            {
+                "name": "delete_record",
+                "description": "Delete a raw_data record by ID. Will fail if the record has been cleaned unless override is set. Requires confirm='yes'.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "record_id": {"type": "integer", "description": "ID of the raw_data record to delete"},
+                        "confirm": {"type": "string", "description": "Must be exactly 'yes' to proceed"},
+                        "override_cleaned_check": {"type": "boolean", "description": "Set true to allow deleting records that have cleaned_data entries. Default false."}
+                    },
+                    "required": ["record_id", "confirm"]
+                }
+            },
+            {
+                "name": "query_records",
+                "description": (
+                    "Search and filter records in the database. Returns up to 50 records. "
+                    f"raw_data columns: {_column_names('raw_data')}. "
+                    f"cleaned_data columns: {_column_names('cleaned_data')}."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "table": {"type": "string", "enum": ["raw_data", "cleaned_data", "audit_log"], "description": "Table to query"},
+                        "filters": {"type": "object", "description": "Optional key-value pairs to filter by. Example: {\"country\": \"CA\"}"},
+                        "limit": {"type": "integer", "description": "Max records to return (default 50, max 50)"}
+                    },
+                    "required": ["table"]
+                }
+            },
         ]
 
     def execute_tool(self, tool_name: str, tool_input: dict) -> str:
@@ -362,8 +395,170 @@ class DataCleaningConversation:
             print(f"     🔍 Search: {query}")
             print(f"     📄 Result preview: {result[:200]}...")
             return result
+        elif tool_name == "insert_record":
+            return self._execute_insert_record(tool_input)
+        elif tool_name == "update_record":
+            return self._execute_update_record(tool_input)
+        elif tool_name == "delete_record":
+            return self._execute_delete_record(tool_input)
+        elif tool_name == "query_records":
+            return self._execute_query_records(tool_input)
         else:
             return f"Unknown tool: {tool_name}"
+
+    def _execute_insert_record(self, tool_input: dict) -> str:
+        try:
+            check_age(tool_input.get('age'))
+            check_country(tool_input.get('country'))
+        except GuardrailError as e:
+            return f"GUARDRAIL BLOCKED: {e}"
+
+        row_id = insert_raw_data(
+            DB_PATH,
+            name=tool_input['name'],
+            age=tool_input.get('age'),
+            city=tool_input.get('city'),
+            address=tool_input.get('address'),
+            postal_code=tool_input.get('postal_code'),
+            municipality=tool_input.get('municipality'),
+            state_province=tool_input.get('state_province'),
+            country=tool_input.get('country'),
+            phone=tool_input.get('phone'),
+            imported_by='claude-assistant',
+        )
+        return f"Inserted record ID {row_id}: {tool_input['name']}"
+
+    def _execute_update_record(self, tool_input: dict) -> str:
+        table = tool_input.get('table', 'raw_data')
+        record_id = tool_input.get('record_id')
+        fields = tool_input.get('fields', {})
+
+        try:
+            check_no_wildcard_update(fields)
+            check_protected_fields(fields, table)
+            if 'age' in fields:
+                check_age(fields['age'])
+            if 'country' in fields:
+                check_country(fields['country'])
+        except GuardrailError as e:
+            return f"GUARDRAIL BLOCKED: {e}"
+
+        # Fetch current record to apply country-specific rules
+        if table == 'raw_data':
+            current = get_raw_data_by_id(DB_PATH, record_id)
+        else:
+            results = query_records(DB_PATH, 'cleaned_data', {'id': record_id}, limit=1)
+            current = results[0] if results else None
+
+        if not current:
+            return f"Record ID {record_id} not found in {table}."
+
+        effective_country = fields.get('country', current.get('country', ''))
+
+        try:
+            if effective_country in ('USA', 'United States') and 'state_province' in fields:
+                check_usa_state(fields['state_province'])
+            if effective_country in ('NL', 'Netherlands') and 'phone' in fields:
+                check_nl_phone_format(fields['phone'])
+        except GuardrailError as e:
+            return f"GUARDRAIL BLOCKED: {e}"
+
+        canada_warning = ""
+        if effective_country in ('CA', 'Canada') and 'postal_code' in fields:
+            canada_warning = " WARNING: Canada postal_code changed — ensure web_search was used to verify first."
+
+        try:
+            if table == 'raw_data':
+                updated = update_raw_data(DB_PATH, record_id, fields)
+            else:
+                updated = update_cleaned_data(DB_PATH, record_id, fields)
+        except ValueError as e:
+            return f"GUARDRAIL BLOCKED: {e}"
+
+        if updated:
+            return f"Updated {table} record ID {record_id}: fields {list(fields.keys())} changed.{canada_warning}"
+        return f"No record found with ID {record_id} in {table}."
+
+    def _execute_delete_record(self, tool_input: dict) -> str:
+        record_id = tool_input.get('record_id')
+        confirm = tool_input.get('confirm', '')
+        override = tool_input.get('override_cleaned_check', False)
+
+        try:
+            check_delete_not_bulk(record_id)
+            check_delete_confirmation(confirm)
+        except GuardrailError as e:
+            return f"GUARDRAIL BLOCKED: {e}"
+
+        cleaned_entries = get_cleaned_data_for_raw(DB_PATH, record_id)
+        if cleaned_entries and not override:
+            return (
+                f"GUARDRAIL BLOCKED: Record ID {record_id} has {len(cleaned_entries)} cleaned_data "
+                f"entries. Set override_cleaned_check=true to force deletion."
+            )
+
+        deleted = delete_raw_data(DB_PATH, record_id)
+        if deleted:
+            return f"Deleted raw_data record ID {record_id}."
+        return f"No record found with ID {record_id} in raw_data."
+
+    def _execute_query_records(self, tool_input: dict) -> str:
+        table = tool_input.get('table', 'raw_data')
+        filters = tool_input.get('filters') or {}
+        limit = min(tool_input.get('limit', 50), 50)
+
+        try:
+            records = query_records(DB_PATH, table, filters, limit)
+        except ValueError as e:
+            return f"Query error: {e}"
+
+        if not records:
+            return f"No records found in {table}" + (f" with filters: {filters}" if filters else ".")
+
+        lines = [f"Found {len(records)} record(s) in {table}:"]
+        for r in records:
+            lines.append(f"  {r}")
+        return "\n".join(lines)
+
+    def handle_canada_cleaning(self, user_query: str) -> str:
+        original = self.system_prompt
+        self.system_prompt = build_system_prompt('CA', schema=DB_SCHEMA)
+        try:
+            return self._run_cleaning_workflow(user_query, country_scope='CA')
+        finally:
+            self.system_prompt = original
+
+    def handle_usa_cleaning(self, user_query: str) -> str:
+        original = self.system_prompt
+        self.system_prompt = build_system_prompt('USA', schema=DB_SCHEMA)
+        try:
+            return self._run_cleaning_workflow(user_query, country_scope='USA')
+        finally:
+            self.system_prompt = original
+
+    def handle_europe_cleaning(self, user_query: str) -> str:
+        original = self.system_prompt
+        self.system_prompt = build_system_prompt('NL', schema=DB_SCHEMA)
+        try:
+            return self._run_cleaning_workflow(user_query, country_scope='NL')
+        finally:
+            self.system_prompt = original
+
+    def handle_mexico_cleaning(self, user_query: str) -> str:
+        original = self.system_prompt
+        self.system_prompt = build_system_prompt('MX', schema=DB_SCHEMA)
+        try:
+            return self._run_cleaning_workflow(user_query, country_scope='MX')
+        finally:
+            self.system_prompt = original
+
+    def handle_japan_cleaning(self, user_query: str) -> str:
+        original = self.system_prompt
+        self.system_prompt = build_system_prompt('JP', schema=DB_SCHEMA)
+        try:
+            return self._run_cleaning_workflow(user_query, country_scope='JP')
+        finally:
+            self.system_prompt = original
 
     def preprocess_data(self, user_input: str) -> str:
         """Pre-process data before sending to Claude. Extract and clean what we can."""
@@ -399,31 +594,19 @@ class DataCleaningConversation:
                 tools=self.define_tools()
             )
 
+
+            
             # Check if Claude called any tools
-            tool_calls = [block for block in response.content if hasattr(block, 'type') and block.type == "tool_use"]
+            #tool_calls = [block for block in response.content if hasattr(block, 'type') and block.type == "tool_use"]
 
             # If no tool calls, Claude is done - return the response
-            if not tool_calls:
+            if response.stop_reason != "tool_use":
+                #if not tool_calls:
                 # Extract text response
                 text_response = next(
                     (block.text for block in response.content if hasattr(block, 'text')),
                     "No response"
                 )
-
-                # Debug: Print full response content to see web search results
-                print(f"\n📡 FULL API RESPONSE CONTENT:")
-                print(f"{'-'*80}")
-                for i, block in enumerate(response.content):
-                    print(f"Block {i} (type: {block.type}):")
-                    if hasattr(block, 'text'):
-                        preview = block.text[:300] + "..." if len(block.text) > 300 else block.text
-                        print(f"  Text: {preview}")
-                    # Check for citations (web search results from OpenRouter)
-                    if hasattr(block, 'citations') and block.citations:
-                        print(f"  🔍 CITATIONS/WEB SEARCH RESULTS ({len(block.citations)} found):")
-                        for j, citation in enumerate(block.citations, 1):
-                            print(f"    Citation {j}: {citation}")
-                print(f"{'-'*80}\n")
 
                 self.messages.append({
                     "role": "assistant",
@@ -441,16 +624,26 @@ class DataCleaningConversation:
             # Execute each tool and collect results
             tool_results = []
             for tool_use in tool_calls:
-                tool_result = self.execute_tool(tool_use.name, tool_use.input)
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": tool_use.id,
-                    "content": tool_result,
-                    "status": "success"  # You could add error handling to set this to "error" if something goes wrong
-                })
-                print(f"  🔧 Tool called: {tool_use.name}")
-                print(f"     Input: {tool_use.input}")
-                print(f"     Result: {tool_result}")
+                try:
+                    tool_result = self.execute_tool(tool_use.name, tool_use.input)
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": tool_use.id,
+                        "content": tool_result,
+                        "status": "success"  # You could add error handling to set this to "error" if something goes wrong
+                    })
+                    print(f"  🔧 Tool called: {tool_use.name}")
+                    print(f"     Input: {tool_use.input}")
+                    print(f"     Result: {tool_result}")
+                except Exception as e:
+                    error_message = f"Error executing tool {tool_use.name}: {e}"
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": tool_use.id,
+                        "content": error_message,
+                        "status": "error"
+                    })
+                    print(f"  ❌ {error_message}")
 
             # Send tool results back to Claude
             self.messages.append({
@@ -552,295 +745,194 @@ class DataCleaningConversation:
         return cleaned_id
 
     def handle_cleaning_request(self, user_query: str) -> str:
-        """Handle data cleaning workflow based on user query.
+        """Route cleaning request to the appropriate country-specific handler."""
+        country = detect_country_scope(user_query)
+        route_map = {
+            'CA': self.handle_canada_cleaning,
+            'USA': self.handle_usa_cleaning,
+            'NL': self.handle_europe_cleaning,
+            'MX': self.handle_mexico_cleaning,
+            'JP': self.handle_japan_cleaning,
+        }
+        if country and country in route_map:
+            print(f"  Routing to {country} handler...")
+            return route_map[country](user_query)
+        print("  No specific country detected — using generic workflow...")
+        return self._run_cleaning_workflow(user_query)
 
-        1. Interpret query to understand what needs cleaning
-        2. Fetch relevant data from database
-        3. Present to Claude for cleaning
-        4. Save cleaned results back to database
+    def _run_cleaning_workflow(self, user_query: str, country_scope: str = None) -> str:
         """
+        Two-phase pipeline:
+          Phase 1 — Python pre-cleaner handles everything deterministic
+                    (casing, country/state expansion, phone formatting, postal spacing)
+          Phase 2 — Claude is called only for records that still need
+                    postal verification or municipality lookup via web search
+        """
+        from prompts.research import build_research_prompt
         workflow_start = time.time()
         agent = DataCleaningAgent(DB_PATH)
 
-        # Step 1: Interpret user query
+        # Step 1: Interpret query
         print(f"\n{'='*80}")
         print("STEP 1: INTERPRETING QUERY")
         print(f"{'='*80}")
-        step1_start = time.time()
+        t = time.time()
         filters = agent.interpret_user_query(user_query)
-        step1_elapsed = time.time() - step1_start
-        print(f"  User Query: '{user_query}'")
-        print(f"  Interpreted Filters: {filters}")
-        print(f"  ⏱️  STEP 1 TIME: {step1_elapsed:.2f}s\n")
+        step1_elapsed = time.time() - t
+        print(f"  Query: '{user_query}'  →  filters: {filters}")
+        print(f"  ⏱️  {step1_elapsed:.2f}s\n")
 
-        # Step 2: Fetch matching data
+        # Step 2: Fetch records
         print(f"{'='*80}")
-        print("STEP 2: FETCHING DATA FROM DATABASE")
+        print("STEP 2: FETCHING RECORDS")
         print(f"{'='*80}")
-        step2_start = time.time()
+        t = time.time()
         records = agent.fetch_data_for_query(filters)
-        step2_elapsed = time.time() - step2_start
-
+        step2_elapsed = time.time() - t
         if not records:
-            return "❌ No records found matching your query. Try: 'clean all Canadian data' or 'clean North American data'"
+            return "❌ No records found matching your query."
+        print(f"  ✅ {len(records)} records  ⏱️  {step2_elapsed:.2f}s\n")
 
-        print(f"  ✅ Found {len(records)} records matching query")
-        print(f"  ⏱️  STEP 2 TIME: {step2_elapsed:.2f}s ({len(records)} records, {step2_elapsed/len(records):.3f}s per record)\n")
-
-        # Step 3: Analyze data quality issues
+        # Step 3: Deterministic pre-cleaning (Python only, no API call)
         print(f"{'='*80}")
-        print("STEP 3: DATA QUALITY ASSESSMENT")
+        print("STEP 3: PYTHON PRE-CLEANING (deterministic)")
         print(f"{'='*80}")
-        step3_start = time.time()
+        t = time.time()
+        pre_cleaned, needs_research = agent.pre_clean_batch(records)
+        step3_elapsed = time.time() - t
+        python_only = len(pre_cleaned) - len(needs_research)
+        print(f"  ✅ {python_only} records fully cleaned by Python")
+        print(f"  🔍 {len(needs_research)} records need Claude (postal/municipality research)")
+        for r in pre_cleaned:
+            changes = r.get('_pre_clean_changes', [])
+            if changes:
+                print(f"    ID {r['id']}: {'; '.join(changes)}")
+        print(f"  ⏱️  {step3_elapsed:.2f}s\n")
 
-        issue_summary = {}
-        for record in records:
-            for issue in record.get('_issues', []):
-                if issue not in issue_summary:
-                    issue_summary[issue] = 0
-                issue_summary[issue] += 1
+        # Step 4 & 5: Claude research (only if needed)
+        step4_elapsed = 0.0
+        step5_elapsed = 0.0
+        research_results = {}
 
-        step3_elapsed = time.time() - step3_start
-        if issue_summary:
-            for issue, count in sorted(issue_summary.items()):
-                print(f"  🔴 {issue}: {count} records")
-        print(f"  ⏱️  STEP 3 TIME: {step3_elapsed:.2f}s\n")
+        if needs_research:
+            # Step 4: Format compact research table
+            print(f"{'='*80}")
+            print("STEP 4: FORMATTING RESEARCH REQUEST FOR CLAUDE")
+            print(f"{'='*80}")
+            t = time.time()
+            research_table = agent.format_research_batch(needs_research)
+            research_prompt = build_research_prompt(country_scope or 'CA', research_table)
+            step4_elapsed = time.time() - t
+            print(f"  Sending {len(needs_research)}/{len(records)} records to Claude")
+            print(f"  Prompt size: {len(research_prompt):,} chars  ⏱️  {step4_elapsed:.2f}s\n")
 
-        # Step 4: Format for Claude
-        print(f"{'='*80}")
-        print("STEP 4: FORMATTING DATA FOR CLAUDE")
-        print(f"{'='*80}")
-        step4_start = time.time()
-        formatted_data = agent.format_batch_for_claude(records)
-        step4_elapsed = time.time() - step4_start
-        print(f"  ✅ Formatted {len(records)} records as table")
-        print(f"  ⏱️  STEP 4 TIME: {step4_elapsed:.2f}s\n")
-        print(formatted_data)
+            # Step 5: Claude does postal/municipality research
+            print(f"{'='*80}")
+            print("STEP 5: CLAUDE RESEARCH (postal + municipality only)")
+            print(f"{'='*80}")
+            t = time.time()
 
-        # Step 5: Ask Claude to clean this data
-        cleaning_prompt = f"""Clean the following {len(records)} records per your system prompt rules.
+            # Use a temporary message list so research doesn't pollute conversation history
+            research_messages = [{"role": "user", "content": research_prompt}]
+            claude_response = "No response"
+            search_count = 0
+            tool_round = 0
+            max_rounds = 3
 
-EXECUTION ORDER — follow exactly, do not deviate:
+            # Focused system prompt: just the research rules for this country
+            from prompts import build_system_prompt
+            research_system = build_system_prompt(country_scope or 'CA', schema='')
 
-PHASE 1 — BATCH ALL SEARCHES FIRST (do this before writing any output):
-Scan every record and fire ALL web_search calls you will need in ONE batch:
-- For each full postal code: one search to verify it matches the address/city
-- For each partial FSA (3-char code): one search to resolve the full postal code and neighbourhood
-- For each missing postal code: one search to find it
-- For each cross-province mismatch you detect via the first-letter rule: no search needed, just flag it
-Fire ALL searches now. Do not write the output table yet.
-
-PHASE 2 — WRITE OUTPUT (only after all searches are complete):
-Using the search results, produce the cleaned table. Apply all standardization rules:
-- Names/cities: proper case
-- Phone: NA format (123) 456-7890, EU format +XX XXX XXX
-- Postal codes: A1A 1A1 (Canada), XXXXX (US), XXXX XX (Netherlands)
-- State/Province and Country: full names
-- Municipality: real estate neighbourhood name from search results
-
-Return ONLY this table, no preamble:
-| ID | Name | Age | City | Address | Postal Code | Municipality | State/Prov | Country | Phone | Validation Notes |
-
-DATA TO CLEAN:
-<raw_data>
-{formatted_data}
-</raw_data>
-"""
-
-        print(f"{'='*80}")
-        print("STEP 5: SENDING TO CLAUDE FOR CLEANING")
-        print(f"{'='*80}")
-        print(f"  📤 Sending {len(records)} records to Claude...")
-        print(f"  🤖 Model: anthropic/claude-haiku-4.5")
-        print(f"  📊 Prompt size: {len(cleaning_prompt):,} characters\n")
-
-        self.messages.append({
-            "role": "user",
-            "content": cleaning_prompt
-        })
-
-        step5_start = time.time()
-        claude_response = "No response"
-        search_count = 0
-        tool_round = 0
-        max_rounds = 3  # Phase 1 = searches, Phase 2 = output; cap prevents runaway loops
-
-        while tool_round < max_rounds:
-            tool_round += 1
-            response = client.messages.create(
-                model="anthropic/claude-haiku-4.5",
-                max_tokens=4096,
-                system=self.system_prompt,
-                messages=self.messages,
-                tools=self.define_tools()
-            )
-
-            tool_calls = [b for b in response.content if hasattr(b, 'type') and b.type == "tool_use"]
-
-            # Print what came back this round
-            print(f"\n  📡 Round {tool_round} ({len(tool_calls)} tool calls, stop={response.stop_reason}):")
-            for block in response.content:
-                if block.type == "tool_use":
-                    tool_input = getattr(block, 'input', {})
-                    if block.name == "web_search":
-                        search_count += 1
-                        print(f"    🔍 Search #{search_count}: {tool_input.get('query', '')}")
-                    else:
-                        print(f"    🔧 {block.name}: {tool_input}")
-                elif block.type == "text" and hasattr(block, 'text') and block.text.strip():
-                    preview = block.text[:200] + "..." if len(block.text) > 200 else block.text
-                    print(f"    💬 {preview}")
-
-            if not tool_calls:
-                # No more tool calls — extract the final text response
-                claude_response = next(
-                    (b.text for b in response.content if hasattr(b, 'text')),
-                    "No response"
+            while tool_round < max_rounds:
+                tool_round += 1
+                response = client.messages.create(
+                    model="anthropic/claude-haiku-4.5",
+                    max_tokens=2048,
+                    system=research_system,
+                    messages=research_messages,
+                    tools=self.define_tools()
                 )
-                self.messages.append({"role": "assistant", "content": response.content})
-                break
+                tool_calls = [b for b in response.content if hasattr(b, 'type') and b.type == "tool_use"]
 
-            # Add assistant message (with tool_use blocks) then send back tool_results
-            self.messages.append({"role": "assistant", "content": response.content})
+                print(f"  Round {tool_round}: {len(tool_calls)} tool calls, stop={response.stop_reason}")
+                for block in response.content:
+                    if block.type == "tool_use" and block.name == "web_search":
+                        search_count += 1
+                        print(f"    🔍 Search #{search_count}: {getattr(block, 'input', {}).get('query', '')}")
 
-            tool_results = []
-            for tool_use in tool_calls:
-                result = self.execute_tool(tool_use.name, getattr(tool_use, 'input', {}))
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": tool_use.id,
-                    "content": result
-                })
+                if not tool_calls:
+                    claude_response = next(
+                        (b.text for b in response.content if hasattr(b, 'text')), "No response"
+                    )
+                    break
 
-            self.messages.append({"role": "user", "content": tool_results})
+                research_messages.append({"role": "assistant", "content": response.content})
+                tool_results = []
+                for tool_use in tool_calls:
+                    result = self.execute_tool(tool_use.name, getattr(tool_use, 'input', {}))
+                    tool_results.append({"type": "tool_result", "tool_use_id": tool_use.id, "content": result})
+                research_messages.append({"role": "user", "content": tool_results})
 
-        # If the loop exited via the cap (Claude still wanted more tools), force the final output
-        if claude_response == "No response":
-            print(f"\n  ⚠️  Round cap hit — forcing final output (no tools)...")
-            final_response = client.messages.create(
-                model="anthropic/claude-haiku-4.5",
-                max_tokens=4096,
-                system=self.system_prompt,
-                messages=self.messages + [{
-                    "role": "user",
-                    "content": "You have completed your research. Now produce ONLY the cleaned data table — no preamble, no commentary."
-                }]
-            )
-            claude_response = next(
-                (b.text for b in final_response.content if hasattr(b, 'text')),
-                "No response"
-            )
-            self.messages.append({"role": "assistant", "content": final_response.content})
+            if claude_response == "No response":
+                print("  ⚠️  Round cap hit — forcing final output...")
+                final = client.messages.create(
+                    model="anthropic/claude-haiku-4.5",
+                    max_tokens=2048,
+                    system=research_system,
+                    messages=research_messages + [{"role": "user", "content":
+                        "Research complete. Now return ONLY the table: | ID | Postal Code | Municipality | Validation Notes |"}]
+                )
+                claude_response = next(
+                    (b.text for b in final.content if hasattr(b, 'text')), "No response"
+                )
 
-        step5_elapsed = time.time() - step5_start
-        print(f"\n  📈 Response size: {len(claude_response):,} characters | 🔍 Searches: {search_count} | Rounds: {tool_round}")
-        print(f"  ⏱️  STEP 5 TIME (CLAUDE API): {step5_elapsed:.2f}s ({step5_elapsed/len(records):.3f}s per record)\n")
+            step5_elapsed = time.time() - t
+            print(f"  🔍 {search_count} searches, {tool_round} rounds  ⏱️  {step5_elapsed:.2f}s\n")
 
+            # Step 6: Parse Claude's 4-column response
+            print(f"{'='*80}")
+            print("STEP 6: PARSING RESEARCH RESULTS")
+            print(f"{'='*80}")
+            research_results = agent.parse_research_response(claude_response)
+            print(f"  ✅ Parsed results for {len(research_results)} records")
+            if not research_results:
+                print(f"  ⚠️  Parse returned 0 results. Raw response:\n{claude_response[:400]}")
+
+        # Step 7: Merge pre-cleaned + research → cleaned_results
         print(f"{'='*80}")
-        print("STEP 6: PARSING CLEANED DATA")
+        print("STEP 7: MERGING AND SAVING")
         print(f"{'='*80}")
-
-        # Show Claude's raw response for debugging
-        print(f"\n📋 Claude's Raw Response (first 800 chars):")
-        print(f"{'-'*80}")
-        print(claude_response[:800])
-        print(f"{'-'*80}\n")
-
-        # Step 6: Parse cleaned data
-        step6_start = time.time()
-        cleaned_records = agent.parse_cleaned_response(claude_response)
-        step6_elapsed = time.time() - step6_start
-
-        if not cleaned_records:
-            print(f"  ❌ Parsing failed - no records extracted")
-            print(f"\n⚠️ PARSING DEBUG INFO:")
-            print(f"  - Response length: {len(claude_response)} characters")
-            print(f"  - Contains pipes (|): {'|' in claude_response}")
-            print(f"  - Contains 'Record': {'Record' in claude_response}")
-            print(f"  - Contains 'ID': {'ID' in claude_response}")
-
-            return f"""⚠️ Parser failed to extract data from Claude's response.
-
-This usually means Claude's response format doesn't match the expected table format.
-
-SOLUTION OPTIONS:
-1. Check the response above - does it have a proper table with pipes (|)?
-2. Ask Claude to return data in a clean table format with:
-   | ID | Name | Age | City | Address | Postal Code | State/Prov | Country | Phone |
-
-3. Run again - sometimes Claude returns slightly different formats
-
-CLAUDE'S RESPONSE (for manual review):
-{claude_response}"""
-
-        # Validate parsed records
-        print(f"  ✅ Successfully parsed {len(cleaned_records)} cleaned records")
-        print(f"  ⏱️  STEP 6 TIME: {step6_elapsed:.2f}s ({step6_elapsed/len(cleaned_records) if cleaned_records else 0:.3f}s per record)")
-
-        # Check for null values
-        null_count = 0
-        for record in cleaned_records:
-            for key, value in record.items():
-                if value is None or value == '' or value == 'N/A':
-                    null_count += 1
-
-        if null_count > len(cleaned_records) * 3:  # More than 3 nulls per record
-            print(f"\n  ⚠️  WARNING: {null_count} null/empty values found in parsed records")
-            print(f"  This might indicate a parsing issue. Review the data above.\n")
-        else:
-            print()
-
-        # Step 7: Save results with detailed logging
-        print(f"{'='*80}")
-        print("STEP 7: SAVING TO DATABASE")
-        print(f"{'='*80}")
-
-        step7_start = time.time()
-        for i, cleaned_data in enumerate(agent.cleaned_results, 1):
-            raw_data_id = cleaned_data['raw_data_id']
-            original = next((r for r in records if r['id'] == raw_data_id), None)
-
-            print(f"\n  Record {i}/{len(agent.cleaned_results)} (ID {raw_data_id}):")
-            print(f"    Name: {original['name']} → {cleaned_data['name']}")
-            print(f"    Phone: {original['phone']} → {cleaned_data['phone']}")
-            print(f"    Postal: {original['postal_code']} → {cleaned_data['postal_code']}")
-            print(f"    State/Prov: {original['state_province']} → {cleaned_data['state_province']}")
-            print(f"    Country: {original['country']} → {cleaned_data['country']}")
-
+        t = time.time()
+        agent.merge_results(pre_cleaned, research_results)
+        batch_index = {r['id']: r for r in records}
+        for r in agent.cleaned_results:
+            orig = batch_index.get(r['raw_data_id'], {})
+            src = 'Python+Claude' if r['raw_data_id'] in research_results else 'Python only'
+            print(f"  ID {r['raw_data_id']} ({src}): "
+                  f"postal {orig.get('postal_code')} → {r.get('postal_code')}  "
+                  f"municipality → {r.get('municipality')}")
         saved_count = agent.save_cleaned_results()
-        step7_elapsed = time.time() - step7_start
-        print(f"\n  ✅ Saved {saved_count} cleaned records to database")
-        print(f"  ⏱️  STEP 7 TIME: {step7_elapsed:.2f}s ({step7_elapsed/saved_count if saved_count else 0:.3f}s per record)\n")
+        step7_elapsed = time.time() - t
+        print(f"\n  ✅ Saved {saved_count} records  ⏱️  {step7_elapsed:.2f}s\n")
 
-        # Step 8: Generate report
-        print(f"{'='*80}")
-        print("STEP 8: COMPLETION REPORT")
-        print(f"{'='*80}")
-        step8_start = time.time()
-        report = agent.generate_report()
-        step8_elapsed = time.time() - step8_start
-        report += f"\n✅ Cleaning workflow complete! {saved_count} records saved.\n"
-
-        # Print overall timing summary
+        # Timing summary
         total_elapsed = time.time() - workflow_start
-        print(f"\n{'='*80}")
+        print(f"{'='*80}")
         print("⏱️  TIMING SUMMARY")
         print(f"{'='*80}")
-        print(f"  Step 1 (Interpret Query):    {step1_elapsed:7.2f}s ({step1_elapsed/total_elapsed*100:5.1f}%)")
-        print(f"  Step 2 (Fetch Data):         {step2_elapsed:7.2f}s ({step2_elapsed/total_elapsed*100:5.1f}%)")
-        print(f"  Step 3 (Quality Assessment): {step3_elapsed:7.2f}s ({step3_elapsed/total_elapsed*100:5.1f}%)")
-        print(f"  Step 4 (Format Data):        {step4_elapsed:7.2f}s ({step4_elapsed/total_elapsed*100:5.1f}%)")
-        print(f"  Step 5 (Claude API):         {step5_elapsed:7.2f}s ({step5_elapsed/total_elapsed*100:5.1f}%) ⭐ BOTTLENECK")
-        print(f"  Step 6 (Parse Results):      {step6_elapsed:7.2f}s ({step6_elapsed/total_elapsed*100:5.1f}%)")
-        print(f"  Step 7 (Save to DB):         {step7_elapsed:7.2f}s ({step7_elapsed/total_elapsed*100:5.1f}%)")
-        print(f"  Step 8 (Report):             {step8_elapsed:7.2f}s ({step8_elapsed/total_elapsed*100:5.1f}%)")
-        print(f"  {'-'*50}")
-        print(f"  TOTAL:                       {total_elapsed:7.2f}s")
-        print(f"  Average per record:          {total_elapsed/len(records):7.3f}s")
-        print(f"  Estimated time for 100k:     {(total_elapsed/len(records))*100000/3600:7.1f}h ({(total_elapsed/len(records))*100000/60:7.0f}m)")
+        print(f"  Step 1 Interpret query:      {step1_elapsed:6.2f}s")
+        print(f"  Step 2 Fetch records:        {step2_elapsed:6.2f}s")
+        print(f"  Step 3 Python pre-clean:     {step3_elapsed:6.2f}s  ({python_only} records done, no API)")
+        if needs_research:
+            print(f"  Step 4 Format research:      {step4_elapsed:6.2f}s")
+            print(f"  Step 5 Claude research:      {step5_elapsed:6.2f}s  ({len(needs_research)} records, {search_count} searches) ⭐")
+        print(f"  Step 7 Merge + save:         {step7_elapsed:6.2f}s")
+        print(f"  {'─'*40}")
+        print(f"  TOTAL                        {total_elapsed:6.2f}s  ({total_elapsed/len(records):.3f}s/record)")
         print(f"{'='*80}\n")
 
-        return report
+        report = agent.generate_report()
+        return report + f"\n✅ {saved_count} records saved ({python_only} Python-only, {len(research_results)} with Claude research).\n"
 
     def run_interactive(self):
         """Run interactive conversation mode with hybrid approach."""

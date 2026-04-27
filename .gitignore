@@ -13,8 +13,12 @@ __pycache__/
 *.sqlite
 *.db
 
-# Debug output
+# Dev/test scripts (not part of the application)
+debug_api.py
+test_direct.py
+test_sdk.py
 debug_output.txt
+scripts/
 
 # IDE
 .vscode/

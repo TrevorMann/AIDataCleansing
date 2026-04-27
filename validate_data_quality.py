@@ -4,31 +4,10 @@ import sys
 import re
 from database import init_db
 from db_helpers import get_all_raw_data
+from config import DB_PATH
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# Read DB_PATH from .env
-def load_db_path():
-    """Load DB_PATH from .env file without requiring python-dotenv."""
-    env_path = os.path.join(os.path.dirname(__file__), '.env')
-    db_path = "F:\\sqlliteDB\\datacleansingDB.sqlite"  # Default fallback
-
-    if os.path.exists(env_path):
-        with open(env_path, 'r') as f:
-            for line in f:
-                if line.startswith('DB_PATH='):
-                    db_path = line.split('=', 1)[1].strip()
-                    break
-
-    # Ensure directory exists
-    db_dir = os.path.dirname(db_path)
-    if db_dir and not os.path.exists(db_dir):
-        os.makedirs(db_dir, exist_ok=True)
-
-    return db_path
-
-DB_PATH = load_db_path()
-os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 init_db(DB_PATH)
 
 # Define validation rules

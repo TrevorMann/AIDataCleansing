@@ -1,26 +1,8 @@
 #!/usr/bin/env python3
 import os
-from dotenv import load_dotenv
 from database import init_db
 from db_helpers import insert_raw_data
-
-# Read DB_PATH from .env
-def load_db_path():
-    """Load DB_PATH from .env file without requiring python-dotenv."""
-    env_path = os.path.join(os.path.dirname(__file__), '.env')
-    db_path = "F:\\sqlliteDB\\datacleansingDB.sqlite"  # Default fallback
-
-    if os.path.exists(env_path):
-        with open(env_path, 'r') as f:
-            for line in f:
-                if line.startswith('DB_PATH='):
-                    db_path = line.split('=', 1)[1].strip()
-                    break
-
-    return db_path
-
-DB_PATH = load_db_path()
-os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+from config import DB_PATH
 
 # Initialize database
 print(f"Initializing database at {DB_PATH}...")

@@ -17,30 +17,10 @@ from database import init_db, get_db_connection
 from db_helpers import get_all_raw_data, insert_cleaned_data, insert_audit_log
 from validate_data_quality import get_records_needing_cleaning, check_record_quality
 from schema_discovery import get_all_schemas
+from config import DB_PATH
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# Read DB_PATH from .env
-def load_db_path():
-    """Load DB_PATH from .env file without requiring python-dotenv."""
-    env_path = os.path.join(os.path.dirname(__file__), '.env')
-    db_path = "F:\\sqlliteDB\\datacleansingDB.sqlite"  # Default fallback
-
-    if os.path.exists(env_path):
-        with open(env_path, 'r') as f:
-            for line in f:
-                if line.startswith('DB_PATH='):
-                    db_path = line.split('=', 1)[1].strip()
-                    break
-
-    # Ensure directory exists
-    db_dir = os.path.dirname(db_path)
-    if db_dir and not os.path.exists(db_dir):
-        os.makedirs(db_dir, exist_ok=True)
-
-    return db_path
-
-DB_PATH = load_db_path()
 init_db(DB_PATH)
 
 
@@ -325,12 +305,14 @@ class DataCleaningAgent:
         if not self.cleaned_results:
             return 0
 
+        batch_index = {r['id']: r for r in self.current_batch}
+
         saved_count = 0
         for cleaned_data in self.cleaned_results:
             raw_data_id = cleaned_data['raw_data_id']
 
             # Find original record to detect transformations
-            original = next((r for r in self.current_batch if r['id'] == raw_data_id), None)
+            original = batch_index.get(raw_data_id)
             transformations = []
 
             if original:
@@ -392,6 +374,103 @@ class DataCleaningAgent:
             saved_count += 1
 
         return saved_count
+
+    def pre_clean_batch(self, records: list) -> tuple[list, list]:
+        """
+        Apply deterministic cleaning to all records.
+        Returns (all_pre_cleaned, needs_research) where needs_research is the
+        subset that still require Claude for postal/municipality lookup.
+        """
+        from pre_cleaner import pre_clean_record, needs_research
+        pre_cleaned = [pre_clean_record(r) for r in records]
+        research_needed = [r for r in pre_cleaned if needs_research(r)]
+        return pre_cleaned, research_needed
+
+    def format_research_batch(self, records: list) -> str:
+        """Format only the fields Claude needs for postal/municipality research."""
+        if not records:
+            return ""
+        headers = ['ID', 'Name', 'Address', 'City', 'Postal Code', 'State/Prov', 'Country', 'Issue']
+        rows = ['| ' + ' | '.join(headers) + ' |',
+                '|' + '|'.join(['---'] * len(headers)) + '|']
+
+        for r in records:
+            postal = (r.get('postal_code') or '').strip()
+            municipality = (r.get('municipality') or '').strip()
+            import re
+            postal_chars = re.sub(r'[\s\-]', '', postal)
+
+            issues = []
+            if not municipality or municipality.upper() == 'N/A':
+                issues.append('municipality missing')
+            if not postal_chars or len(postal_chars) < 5:
+                issues.append('postal incomplete' if postal_chars else 'postal missing')
+
+            row = [
+                str(r['id']),
+                r.get('name', ''),
+                r.get('address', ''),
+                r.get('city', ''),
+                postal or 'N/A',
+                r.get('state_province', ''),
+                r.get('country', ''),
+                '; '.join(issues),
+            ]
+            rows.append('| ' + ' | '.join(row) + ' |')
+
+        return '\n'.join(rows)
+
+    def parse_research_response(self, response: str) -> dict:
+        """
+        Parse Claude's focused 4-column response.
+        Returns {record_id: {postal_code, municipality, validation_notes}}.
+        """
+        results = {}
+        for line in response.strip().split('\n'):
+            if not line.strip().startswith('|') or '---' in line:
+                continue
+            parts = [p.strip() for p in line.split('|')[1:-1]]
+            if len(parts) < 3:
+                continue
+            try:
+                record_id = int(parts[0])
+            except ValueError:
+                continue
+            results[record_id] = {
+                'postal_code': parts[1] if parts[1] not in ('N/A', '') else None,
+                'municipality': parts[2] if parts[2] not in ('N/A', '') else None,
+                'validation_notes': parts[3] if len(parts) > 3 else '',
+            }
+        return results
+
+    def merge_results(self, pre_cleaned: list, research_results: dict) -> None:
+        """
+        Overlay Claude's research results onto pre-cleaned records
+        and populate self.cleaned_results ready for save_cleaned_results().
+        """
+        self.cleaned_results = []
+        for record in pre_cleaned:
+            merged = dict(record)
+            merged['raw_data_id'] = record['id']
+
+            research = research_results.get(record['id'], {})
+            if research.get('postal_code'):
+                merged['postal_code'] = research['postal_code']
+            if research.get('municipality'):
+                merged['municipality'] = research['municipality']
+
+            # Combine pre-clean change log with Claude's notes
+            pre_changes = record.get('_pre_clean_changes', [])
+            claude_notes = research.get('validation_notes', '')
+            parts = []
+            if pre_changes:
+                parts.append('Pre-cleaned: ' + '; '.join(pre_changes))
+            if claude_notes:
+                parts.append(claude_notes)
+            merged['validation_notes'] = ' | '.join(parts)
+            merged.setdefault('cleaned_by', 'pre-cleaner+claude' if research else 'pre-cleaner')
+
+            self.cleaned_results.append(merged)
 
     def generate_report(self) -> str:
         """Generate a summary report of cleaning results."""

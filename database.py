@@ -67,5 +67,47 @@ def init_db(db_path: str) -> None:
     )
     ''')
 
+    # column_metadata table - human-readable descriptions for each column,
+    # used to build Claude tool schemas at runtime without hardcoding
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS column_metadata (
+        table_name  TEXT NOT NULL,
+        column_name TEXT NOT NULL,
+        description TEXT,
+        PRIMARY KEY (table_name, column_name)
+    )
+    ''')
+
+    _seed_column_metadata(cursor)
+
     conn.commit()
     conn.close()
+
+
+def _seed_column_metadata(cursor) -> None:
+    """Insert default column descriptions if they don't already exist."""
+    defaults = [
+        ('raw_data',      'name',           'Full name of the contact in Proper Case'),
+        ('raw_data',      'age',            'Integer between 1 and 120'),
+        ('raw_data',      'city',           'City name in Proper Case'),
+        ('raw_data',      'address',        'Street address with standardized abbreviations (Street, Avenue, Road)'),
+        ('raw_data',      'postal_code',    'Postal/ZIP code in the format for the record country'),
+        ('raw_data',      'municipality',   'Real estate neighbourhood name (e.g. North York, Upper East Side)'),
+        ('raw_data',      'state_province', 'Full state or province name (e.g. Ontario, New York)'),
+        ('raw_data',      'country',        'Must be one of: CA, USA, NL, MX, JP'),
+        ('raw_data',      'phone',          'Phone number in country-appropriate format'),
+        ('cleaned_data',  'name',           'Cleaned full name in Proper Case'),
+        ('cleaned_data',  'age',            'Integer between 1 and 120'),
+        ('cleaned_data',  'city',           'Cleaned city name in Proper Case'),
+        ('cleaned_data',  'address',        'Cleaned street address'),
+        ('cleaned_data',  'postal_code',    'Validated postal/ZIP code'),
+        ('cleaned_data',  'municipality',   'Verified real estate neighbourhood name'),
+        ('cleaned_data',  'state_province', 'Full state or province name'),
+        ('cleaned_data',  'country',        'Full country name (e.g. Canada, United States)'),
+        ('cleaned_data',  'phone',          'Standardized phone number'),
+        ('cleaned_data',  'validation_notes', 'Notes on what was changed and confidence level'),
+    ]
+    cursor.executemany(
+        'INSERT OR IGNORE INTO column_metadata (table_name, column_name, description) VALUES (?, ?, ?)',
+        defaults,
+    )
