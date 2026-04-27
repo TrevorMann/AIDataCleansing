@@ -301,13 +301,13 @@ class DataCleaningConversation:
             },
             {
                 "name": "web_search",
-                "description": "Search the web to verify addresses, postal codes, and municipalities. Use this to confirm that a postal code matches an address/city, find the real estate neighbourhood for a postal code or FSA, or resolve ambiguous addresses.",
+                "description": "Search the web to verify addresses, postal codes, and municipalities. Use this to confirm that a postal code matches an address/city, find the real estate municipality for a postal code or FSA, or resolve ambiguous addresses.",
                 "input_schema": {
                     "type": "object",
                     "properties": {
                         "query": {
                             "type": "string",
-                            "description": "Search query, e.g. 'M6H 1E7 Toronto neighbourhood real estate', '25 Muir Avenue M6H Toronto postal code', 'V6B 2W9 Vancouver municipality'"
+                            "description": "Search query, e.g. 'M6H 1E7 Toronto Municipality real estate', '25 Muir Avenue M6H Toronto postal code', 'V6B 2W9 Vancouver municipality'"
                         },
                         "max_results": {
                             "type": "integer",
@@ -587,7 +587,8 @@ class DataCleaningConversation:
         # Step 3: Loop until Claude stops calling tools
         while True:
             response = client.messages.create(
-                model="anthropic/claude-haiku-4.5",
+               # model="anthropic/claude-haiku-4.5",
+                model="openai/gpt-oss-20b:free",
                 max_tokens=2048,
                 system=self.system_prompt,
                 messages=self.messages,
@@ -597,7 +598,6 @@ class DataCleaningConversation:
 
             
             # Check if Claude called any tools
-            #tool_calls = [block for block in response.content if hasattr(block, 'type') and block.type == "tool_use"]
 
             # If no tool calls, Claude is done - return the response
             if response.stop_reason != "tool_use":
@@ -620,6 +620,8 @@ class DataCleaningConversation:
                 "role": "assistant",
                 "content": response.content
             })
+
+            tool_calls = [block for block in response.content if hasattr(block, 'type') and block.type == "tool_use"]
 
             # Execute each tool and collect results
             tool_results = []
@@ -837,7 +839,7 @@ class DataCleaningConversation:
             claude_response = "No response"
             search_count = 0
             tool_round = 0
-            max_rounds = 3
+            max_rounds = 20
 
             # Focused system prompt: just the research rules for this country
             from prompts import build_system_prompt
@@ -846,11 +848,13 @@ class DataCleaningConversation:
             while tool_round < max_rounds:
                 tool_round += 1
                 response = client.messages.create(
-                    model="anthropic/claude-haiku-4.5",
+                    #model="anthropic/claude-haiku-4.5",
+                    model="openai/gpt-oss-20b:free",
                     max_tokens=2048,
                     system=research_system,
                     messages=research_messages,
-                    tools=self.define_tools()
+                    tools=self.define_tools(),
+                    cache_control="ephemeral"
                 )
                 tool_calls = [b for b in response.content if hasattr(b, 'type') and b.type == "tool_use"]
 
@@ -876,7 +880,8 @@ class DataCleaningConversation:
             if claude_response == "No response":
                 print("  ⚠️  Round cap hit — forcing final output...")
                 final = client.messages.create(
-                    model="anthropic/claude-haiku-4.5",
+                    #model="anthropic/claude-haiku-4.5",
+                    model="openai/gpt-oss-20b:free",
                     max_tokens=2048,
                     system=research_system,
                     messages=research_messages + [{"role": "user", "content":

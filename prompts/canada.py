@@ -17,7 +17,7 @@ There are three states — handle each differently:
 
   FULL postal code (6 characters, e.g. M6H 1E7, V6B 2W9):
   - NEVER modify or change. Treat as authoritative.
-  - Web search to VERIFY it matches address + city.
+  - Web search to VERIFY the address/city Matches the postal code
   - If mismatch: flag as "POSTAL CODE MISMATCH: [code] does not match [address], [city]. KEEP ORIGINAL — requires review."
   - If confirmed: record confidence score in validation notes.
 
