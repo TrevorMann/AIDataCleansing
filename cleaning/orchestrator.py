@@ -16,13 +16,21 @@ this file currently exposes the helpers needed by it.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Optional
 
-from cleaning.flags import Flag
-from cleaning.pre_cleaner import get_country_code, pre_clean_record, needs_research
-from cleaning.types import CleaningOutput
-from db_helpers import query_records
-from validate_data_quality import get_records_needing_cleaning
+from cleaning.agent import CleaningAgent
+from cleaning.cache import WebSearchCache
+from cleaning.escalation import EscalationAgent
+from cleaning.flags import FlagType, persist_flags
+from cleaning.llm_client import Clients, build_clients
+from cleaning.pre_cleaner import get_country_code, pre_clean_record
+from cleaning.types import CleaningOutput, CleaningRunReport
+from config import DB_PATH as DEFAULT_DB_PATH
+from db_helpers import insert_audit_log, insert_cleaned_data, query_records
+from prompts import build_system_prompt
+from prompts.research import build_research_prompt
+from schema_discovery import format_schema_for_prompt
 
 
 logger = logging.getLogger(__name__)
@@ -144,21 +152,6 @@ def merge_results(
         result["_flags"] = out.flags if out else []
         merged.append(result)
     return merged
-
-
-import time
-
-from cleaning.agent import CleaningAgent
-from cleaning.cache import WebSearchCache
-from cleaning.escalation import EscalationAgent
-from cleaning.flags import FlagType, persist_flags
-from cleaning.llm_client import Clients, build_clients
-from cleaning.types import CleaningRunReport
-from config import DB_PATH as DEFAULT_DB_PATH
-from db_helpers import insert_audit_log, insert_cleaned_data
-from prompts import build_system_prompt
-from prompts.research import build_research_prompt
-from schema_discovery import format_schema_for_prompt
 
 
 _WEB_SEARCH_TOOL = {
@@ -304,11 +297,12 @@ def run_cleaning_workflow(
                                  "flag_type": f.flag_type.value,
                                  "severity": f.severity.value, "reason": f.reason})
 
+    stats = web_cache.stats()
     summary_text = (
         f"Cleaned {saved}/{len(records)} records. "
         f"{len(flag_summary)} flag(s) raised. "
-        f"Cache: {web_cache.stats()['hits']} hits / "
-        f"{web_cache.stats()['misses']} misses. "
+        f"Cache: {stats['hits']} hits / "
+        f"{stats['misses']} misses. "
         f"Total: {sum(timing.values()):.2f}s."
     )
     return CleaningRunReport(
@@ -316,7 +310,7 @@ def run_cleaning_workflow(
         cleaned_count=saved,
         flagged_count=len(flag_summary),
         flags_by_type=flags_by_type,
-        cache_stats=web_cache.stats(),
+        cache_stats=stats,
         timing=timing,
         flag_summary=flag_summary,
         errors=errors,

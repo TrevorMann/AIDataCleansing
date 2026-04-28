@@ -93,11 +93,11 @@ def test_fetch_records_excludes_already_cleaned(tmp_db):
 
 # ---- Workflow integration tests ----
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 import pytest
 
 
-def test_run_cleaning_workflow_end_to_end_mixed_batch(tmp_db, mock_tavily, monkeypatch):
+def test_run_cleaning_workflow_end_to_end_mixed_batch(tmp_db, mock_tavily):
     """Mixed batch: 2 CA + 1 USA + 1 unknown country.
     Mocks LLM to return canned tables. Verifies records persisted, flags raised.
     """
@@ -118,8 +118,6 @@ def test_run_cleaning_workflow_end_to_end_mixed_batch(tmp_db, mock_tavily, monke
                     address="?", city="?", state_province="?",
                     municipality="")
 
-    sdk = MagicMock()
-    fast_resp = MagicMock(); fast_resp.content = []; fast_resp.stop_reason = "end_turn"
     standard_resp_text = (
         "| ID | Postal Code | Municipality | Validation Notes |\n"
         "| 1 | M6H 1E7 | The Annex | HIGH |\n"
@@ -165,7 +163,6 @@ def test_run_cleaning_workflow_end_to_end_mixed_batch(tmp_db, mock_tavily, monke
 def test_run_cleaning_workflow_no_records_returns_zero_report(tmp_db):
     from cleaning.llm_client import Clients, LLMClient
     from cleaning.orchestrator import run_cleaning_workflow
-    from unittest.mock import MagicMock
 
     fake = LLMClient(sdk=MagicMock(), model="m",
                      supports_cache_control=False, base_url=None)
