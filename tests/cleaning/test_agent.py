@@ -67,3 +67,142 @@ def test_needs_escalation_country_case_insensitive():
     # Lowercase country should NOT trigger UNKNOWN_COUNTRY
     out = _output_with({"country": "canada", "postal_code": "M6H 1E7", "municipality": "Toronto"})
     assert FlagType.UNKNOWN_COUNTRY not in needs_escalation(out)
+
+
+# ---- CleaningAgent tests ----
+
+import pytest
+from unittest.mock import MagicMock
+
+
+def _mock_response(text=None, tool_calls=None):
+    """Build a fake Anthropic-style response."""
+    resp = MagicMock()
+    resp.content = []
+    if text is not None:
+        block = MagicMock()
+        block.type = "text"
+        block.text = text
+        del block.name  # so "hasattr(b, 'name')" tests don't pass for text blocks
+        resp.content.append(block)
+    if tool_calls:
+        for name, inp, tid in tool_calls:
+            block = MagicMock()
+            block.type = "tool_use"
+            block.name = name
+            block.input = inp
+            block.id = tid
+            resp.content.append(block)
+    resp.stop_reason = "tool_use" if tool_calls else "end_turn"
+    return resp
+
+
+def test_cleaning_agent_no_research_needed_returns_pre_cleaned(mock_llm):
+    """If a record arrives with all fields resolved, agent returns it untouched."""
+    from cleaning.agent import CleaningAgent
+    from cleaning.cache import WebSearchCache
+    escalator = MagicMock()
+    escalator.investigate.return_value = None  # not called
+
+    agent = CleaningAgent(
+        country_code="CA",
+        system_prompt="sys",
+        research_prompt_builder=lambda c, t: "research please",
+        tools=[{"name": "web_search"}],
+        llm_client=mock_llm,
+        web_cache=WebSearchCache(),
+        escalator=escalator,
+    )
+    mock_llm.messages_create.return_value = _mock_response(
+        text="| ID | Postal Code | Municipality | Validation Notes |\n"
+             "| 1 | M6H 1E7 | The Annex | Confidence: HIGH |"
+    )
+    record = {"id": 1, "country": "Canada", "postal_code": "M6H 1E7", "municipality": "The Annex"}
+    outputs = agent.process([record])
+    assert len(outputs) == 1
+    assert outputs[0].cleaned_record["id"] == 1
+    escalator.investigate.assert_not_called()
+
+
+def test_cleaning_agent_calls_web_search_via_cache(mock_llm, mock_tavily):
+    """Tool-use loop dispatches web_search through the cache."""
+    from cleaning.agent import CleaningAgent
+    from cleaning.cache import WebSearchCache
+    cache = WebSearchCache()
+    escalator = MagicMock()
+    mock_tavily.return_value = "search result"
+
+    mock_llm.messages_create.side_effect = [
+        _mock_response(tool_calls=[("web_search", {"query": "M6H neighbourhood"}, "t1")]),
+        _mock_response(text="| ID | Postal Code | Municipality | Validation Notes |\n"
+                            "| 7 | M6H 1E7 | The Annex | HIGH |"),
+    ]
+    agent = CleaningAgent(
+        country_code="CA", system_prompt="sys",
+        research_prompt_builder=lambda c, t: "research",
+        tools=[{"name": "web_search"}],
+        llm_client=mock_llm, web_cache=cache, escalator=escalator,
+    )
+    record = {"id": 7, "country": "Canada", "postal_code": "M6H", "municipality": "N/A",
+              "address": "25 Muir Ave", "city": "Toronto", "state_province": "Ontario"}
+    outputs = agent.process([record])
+    assert len(outputs) == 1
+    mock_tavily.assert_called_once()
+    assert cache.stats()["misses"] == 1
+
+
+def test_cleaning_agent_escalates_unresolved_record(mock_llm):
+    """A record that comes back with N/A municipality triggers escalator.investigate."""
+    from cleaning.agent import CleaningAgent
+    from cleaning.cache import WebSearchCache
+    from cleaning.types import CleaningOutput
+    from cleaning.flags import Flag, FlagType, FlagSeverity
+
+    escalator = MagicMock()
+    escalator.investigate.return_value = CleaningOutput(
+        cleaned_record={"id": 9, "country": "Canada", "postal_code": "M6H 1E7",
+                        "municipality": "The Annex", "validation_notes": "resolved"},
+        flags=[Flag(FlagType.RESOLVED_AFTER_ESCALATION, FlagSeverity.INFO,
+                    "agent escalated and resolved", "escalator")],
+    )
+    mock_llm.messages_create.return_value = _mock_response(
+        text="| ID | Postal Code | Municipality | Validation Notes |\n"
+             "| 9 | N/A | N/A | LOW could not resolve |"
+    )
+    agent = CleaningAgent(
+        country_code="CA", system_prompt="sys",
+        research_prompt_builder=lambda c, t: "research",
+        tools=[{"name": "web_search"}],
+        llm_client=mock_llm, web_cache=WebSearchCache(), escalator=escalator,
+    )
+    record = {"id": 9, "country": "Canada", "postal_code": "M6H", "municipality": "N/A",
+              "address": "25 Muir Ave", "city": "Toronto", "state_province": "Ontario"}
+    outputs = agent.process([record])
+    escalator.investigate.assert_called_once()
+    assert outputs[0].cleaned_record["municipality"] == "The Annex"
+    assert any(f.flag_type == FlagType.RESOLVED_AFTER_ESCALATION for f in outputs[0].flags)
+
+
+def test_cleaning_agent_max_rounds_rescue(mock_llm):
+    """If model loops past max_rounds, agent falls back to force-final-output."""
+    from cleaning.agent import CleaningAgent
+    from cleaning.cache import WebSearchCache
+
+    mock_llm.messages_create.side_effect = (
+        [_mock_response(tool_calls=[("web_search", {"query": "x"}, f"t{i}")])
+         for i in range(5)]
+        + [_mock_response(text="| ID | Postal Code | Municipality | Validation Notes |\n"
+                               "| 1 | M6H 1E7 | The Annex | LOW |")]
+    )
+    agent = CleaningAgent(
+        country_code="CA", system_prompt="sys",
+        research_prompt_builder=lambda c, t: "research",
+        tools=[{"name": "web_search"}],
+        llm_client=mock_llm, web_cache=WebSearchCache(),
+        escalator=MagicMock(), max_rounds=3,
+    )
+    record = {"id": 1, "country": "Canada", "postal_code": "M6H", "municipality": "N/A"}
+    outputs = agent.process([record])
+    # 3 rounds + 1 force-final = 4 calls total
+    assert mock_llm.messages_create.call_count == 4
+    assert outputs  # got an output despite the rescue
