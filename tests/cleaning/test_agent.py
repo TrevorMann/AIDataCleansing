@@ -206,3 +206,35 @@ def test_cleaning_agent_max_rounds_rescue(mock_llm):
     # 3 rounds + 1 force-final = 4 calls total
     assert mock_llm.messages_create.call_count == 4
     assert outputs  # got an output despite the rescue
+
+
+def test_cleaning_agent_search_log_resets_between_process_calls(mock_llm, mock_tavily):
+    """Search log must not bleed between consecutive process() calls."""
+    from cleaning.agent import CleaningAgent
+    from cleaning.cache import WebSearchCache
+    mock_tavily.side_effect = lambda q, max_results=5: f"r:{q}"
+
+    mock_llm.messages_create.side_effect = [
+        # batch 1: one tool call + finish
+        _mock_response(tool_calls=[("web_search", {"query": "q1"}, "t1")]),
+        _mock_response(text="| ID | Postal Code | Municipality | Validation Notes |\n| 1 | M6H 1E7 | Toronto | HIGH |"),
+        # batch 2: finish immediately (no tool call)
+        _mock_response(text="| ID | Postal Code | Municipality | Validation Notes |\n| 2 | V6B 2W9 | Vancouver | HIGH |"),
+    ]
+    agent = CleaningAgent(
+        country_code="CA", system_prompt="sys",
+        research_prompt_builder=lambda c, t: "research",
+        tools=[{"name": "web_search"}],
+        llm_client=mock_llm, web_cache=WebSearchCache(),
+        escalator=MagicMock(),
+    )
+    rec1 = {"id": 1, "country": "Canada", "postal_code": "M6H 1E7", "municipality": "Toronto"}
+    rec2 = {"id": 2, "country": "Canada", "postal_code": "V6B 2W9", "municipality": "Vancouver"}
+
+    outputs1 = agent.process([rec1])
+    outputs2 = agent.process([rec2])
+
+    # batch 2's search log must be empty (no tool calls in batch 2)
+    assert outputs2[0].search_log == []
+    # batch 1's output must still have the search
+    assert len(outputs1[0].search_log) == 1

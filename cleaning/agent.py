@@ -103,6 +103,7 @@ class CleaningAgent:
         if not records:
             return []
 
+        self._search_log = []  # reset per invocation; each batch gets its own log
         research_table = self._format_research_batch(records)
         prompt = self.research_prompt_builder(self.country_code, research_table)
         raw_response = self._run_research_loop(prompt)
