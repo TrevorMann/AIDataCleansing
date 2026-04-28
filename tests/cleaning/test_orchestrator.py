@@ -89,3 +89,87 @@ def test_fetch_records_excludes_already_cleaned(tmp_db):
     result = fetch_records(tmp_db, filters={"scope": "all_uncleaned"})
     assert all(r["name"] != "already_done" for r in result)
     assert any(r["name"] == "still_dirty" for r in result)
+
+
+# ---- Workflow integration tests ----
+
+from unittest.mock import MagicMock, patch
+import pytest
+
+
+def test_run_cleaning_workflow_end_to_end_mixed_batch(tmp_db, mock_tavily, monkeypatch):
+    """Mixed batch: 2 CA + 1 USA + 1 unknown country.
+    Mocks LLM to return canned tables. Verifies records persisted, flags raised.
+    """
+    from db_helpers import insert_raw_data, query_flags
+    from cleaning.llm_client import Clients, LLMClient
+    from cleaning.orchestrator import run_cleaning_workflow
+
+    insert_raw_data(tmp_db, name="alice", country="Canada", postal_code="M6H 1E7",
+                    address="25 Muir Ave", city="Toronto", state_province="Ontario",
+                    municipality="")
+    insert_raw_data(tmp_db, name="bob", country="CA", postal_code="V6B 2W9",
+                    address="100 Granville", city="Vancouver", state_province="BC",
+                    municipality="")
+    insert_raw_data(tmp_db, name="carol", country="USA", postal_code="10025",
+                    address="123 W 95th St", city="New York", state_province="NY",
+                    municipality="")
+    insert_raw_data(tmp_db, name="diana", country="", postal_code="???",
+                    address="?", city="?", state_province="?",
+                    municipality="")
+
+    sdk = MagicMock()
+    fast_resp = MagicMock(); fast_resp.content = []; fast_resp.stop_reason = "end_turn"
+    standard_resp_text = (
+        "| ID | Postal Code | Municipality | Validation Notes |\n"
+        "| 1 | M6H 1E7 | The Annex | HIGH |\n"
+        "| 2 | V6B 2W9 | Yaletown | HIGH |\n"
+        "| 3 | 10025 | Upper West Side | HIGH |"
+    )
+    text_block = MagicMock(); text_block.text = standard_resp_text
+    del text_block.name
+    text_block.type = "text"
+    standard_resp = MagicMock(); standard_resp.content = [text_block]
+    standard_resp.stop_reason = "end_turn"
+
+    deep_resp_text = '{"country": "Canada", "postal_code": "M6H 1E7", ' \
+                     '"municipality": "The Annex", "validation_notes": "resolved"}'
+    deep_block = MagicMock(); deep_block.text = deep_resp_text
+    del deep_block.name
+    deep_block.type = "text"
+    deep_resp = MagicMock(); deep_resp.content = [deep_block]
+    deep_resp.stop_reason = "end_turn"
+
+    fast_client = LLMClient(sdk=MagicMock(), model="fast",
+                            supports_cache_control=False, base_url=None)
+    standard_client = LLMClient(sdk=MagicMock(), model="std",
+                                 supports_cache_control=False, base_url=None)
+    standard_client.sdk.messages.create.return_value = standard_resp
+    deep_client = LLMClient(sdk=MagicMock(), model="deep",
+                             supports_cache_control=False, base_url=None)
+    deep_client.sdk.messages.create.return_value = deep_resp
+    clients = Clients(fast=fast_client, standard=standard_client, deep=deep_client)
+
+    report = run_cleaning_workflow(
+        "CLEAN all uncleaned data", db_path=tmp_db, clients=clients,
+    )
+
+    assert report.records_processed == 4
+    assert report.cleaned_count == 4
+    # diana's unknown country triggers UNKNOWN_COUNTRY → escalator resolves it
+    flags = query_flags(tmp_db, only_unresolved=False)
+    flag_types = {f["flag_type"] for f in flags}
+    assert "resolved_after_escalation" in flag_types or "unknown_country" in flag_types
+
+
+def test_run_cleaning_workflow_no_records_returns_zero_report(tmp_db):
+    from cleaning.llm_client import Clients, LLMClient
+    from cleaning.orchestrator import run_cleaning_workflow
+    from unittest.mock import MagicMock
+
+    fake = LLMClient(sdk=MagicMock(), model="m",
+                     supports_cache_control=False, base_url=None)
+    clients = Clients(fast=fake, standard=fake, deep=fake)
+    report = run_cleaning_workflow("CLEAN canadian data", db_path=tmp_db, clients=clients)
+    assert report.records_processed == 0
+    assert "No records" in report.summary_text
