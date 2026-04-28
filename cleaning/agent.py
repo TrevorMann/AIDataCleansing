@@ -8,7 +8,7 @@ from cleaning.flags import FlagType
 from cleaning.types import CleaningOutput
 
 
-_VALID_COUNTRIES_FULL = {"Canada", "United States", "Netherlands", "Mexico", "Japan"}
+_VALID_COUNTRIES_FULL = {"CANADA", "UNITED STATES", "NETHERLANDS", "MEXICO", "JAPAN"}
 _VALID_COUNTRIES_CODE = {"CA", "USA", "NL", "MX", "JP"}
 
 
@@ -23,7 +23,7 @@ def needs_escalation(output: CleaningOutput) -> list[FlagType]:
 
     country = (rec.get("country") or "").strip()
     if (not country
-        or country not in _VALID_COUNTRIES_FULL
+        or country.upper() not in _VALID_COUNTRIES_FULL
            and country.upper() not in _VALID_COUNTRIES_CODE):
         flags.append(FlagType.UNKNOWN_COUNTRY)
 

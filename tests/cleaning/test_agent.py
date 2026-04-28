@@ -60,3 +60,10 @@ def test_needs_escalation_returns_multiple_when_applicable():
     flags = needs_escalation(out)
     assert FlagType.POSTAL_UNRESOLVED in flags
     assert FlagType.MUNICIPALITY_UNRESOLVED in flags
+
+
+def test_needs_escalation_country_case_insensitive():
+    from cleaning.agent import needs_escalation
+    # Lowercase country should NOT trigger UNKNOWN_COUNTRY
+    out = _output_with({"country": "canada", "postal_code": "M6H 1E7", "municipality": "Toronto"})
+    assert FlagType.UNKNOWN_COUNTRY not in needs_escalation(out)
