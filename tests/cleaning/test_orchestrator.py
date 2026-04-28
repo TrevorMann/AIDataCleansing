@@ -2,6 +2,8 @@
 
 Helper tests added in Task 11; workflow tests added in Task 12.
 """
+from unittest.mock import MagicMock
+import pytest
 
 
 def test_detect_country_filter_explicit_override():
@@ -92,9 +94,6 @@ def test_fetch_records_excludes_already_cleaned(tmp_db):
 
 
 # ---- Workflow integration tests ----
-
-from unittest.mock import MagicMock
-import pytest
 
 
 def test_run_cleaning_workflow_end_to_end_mixed_batch(tmp_db, mock_tavily):
