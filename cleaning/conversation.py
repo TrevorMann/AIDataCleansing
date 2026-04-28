@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from cleaning.cache import WebSearchCache
 from cleaning.llm_client import Clients
 from db_helpers import (
     delete_raw_data, get_cleaned_data_for_raw, get_raw_data_by_id,
@@ -70,6 +71,7 @@ class AdHocConversation:
         self.clients = clients
         self.db_path = db_path
         self.messages: list[dict] = []
+        self._cache = WebSearchCache()
         self.tools = self._build_tools()
 
     def _build_tools(self) -> list[dict]:
@@ -170,10 +172,8 @@ class AdHocConversation:
     def _execute_tool(self, name: str, args: dict) -> str:
         try:
             if name == "web_search":
-                from cleaning.cache import WebSearchCache
-                cache = WebSearchCache()
-                return cache.web_search_cached(args.get("query", ""),
-                                               args.get("max_results", 5))
+                return self._cache.web_search_cached(args.get("query", ""),
+                                                     args.get("max_results", 5))
             if name == "insert_record":
                 return self._insert_record(args)
             if name == "update_record":
@@ -263,7 +263,7 @@ class AdHocConversation:
         except ValueError as e:
             return f"Query error: {e}"
         if not records:
-            return f"No records found in {table}" + (f" with filters: {filters}" if filters else ".")
+            return f"No records found in {table}" + (f" with filters: {filters}." if filters else ".")
         lines = [f"Found {len(records)} record(s) in {table}:"]
         for r in records:
             lines.append(f"  {r}")
