@@ -20,6 +20,17 @@ from cleaning.types import CleaningOutput, SearchHit
 logger = logging.getLogger(__name__)
 
 
+# These are the only flag types that needs_escalation() can evaluate.
+# Hints outside this set cannot be detected as resolved or unresolved by that function.
+_NEEDS_ESCALATION_DETECTABLE = frozenset({
+    FlagType.UNKNOWN_COUNTRY,
+    FlagType.POSTAL_UNRESOLVED,
+    FlagType.POSTAL_AMBIGUOUS,
+    FlagType.MUNICIPALITY_UNRESOLVED,
+    FlagType.LOW_CONFIDENCE_RESEARCH,
+})
+
+
 _SYSTEM_PROMPT = """You are an escalation specialist for a real-estate data cleaning system.
 You receive ONE record that the country agent could not fully resolve, plus the
 list of issues to investigate and a transcript of prior web searches.
@@ -89,8 +100,14 @@ class EscalationAgent:
         self, record: dict, final_text: str, flag_hints: list[FlagType],
     ) -> CleaningOutput:
         merged = dict(record)
+        text = final_text.strip()
+        if text.startswith("```"):
+            text = "\n".join(
+                line for line in text.splitlines()
+                if not line.strip().startswith("```")
+            ).strip()
         try:
-            parsed = json.loads(final_text.strip())
+            parsed = json.loads(text)
             for k in ("country", "postal_code", "municipality", "validation_notes"):
                 if parsed.get(k):
                     merged[k] = parsed[k]
@@ -107,7 +124,8 @@ class EscalationAgent:
         flags: list[Flag] = []
         any_resolved = False
         for hint in flag_hints:
-            if hint in survivors:
+            if hint not in _NEEDS_ESCALATION_DETECTABLE or hint in survivors:
+                # Undetectable by needs_escalation, or still present → not resolved
                 flags.append(Flag(
                     flag_type=hint,
                     severity=FlagSeverity.NEEDS_REVIEW,

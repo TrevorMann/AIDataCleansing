@@ -97,3 +97,56 @@ def test_escalation_does_not_redo_prior_searches(mock_llm, mock_tavily):
     messages_sent = kwargs["messages"]
     flat_text = str(messages_sent)
     assert "M6H Toronto postal" in flat_text or "prior-result" in flat_text
+
+
+def test_escalation_undetectable_flag_not_silently_resolved(mock_llm):
+    """GUARDRAIL_BLOCKED is not detectable by needs_escalation; it must survive as
+    NEEDS_REVIEW even when the LLM returns perfect JSON resolving all address fields."""
+    from cleaning.escalation import EscalationAgent
+    from cleaning.cache import WebSearchCache
+    from cleaning.flags import FlagType
+
+    mock_llm.messages_create.return_value = _mock_response(
+        text='{"country": "Canada", "postal_code": "M6H 1E7", '
+             '"municipality": "The Annex", "validation_notes": "all fields resolved"}'
+    )
+    esc = EscalationAgent(llm_client=mock_llm, web_cache=WebSearchCache(),
+                          tools=[{"name": "web_search"}])
+    record = {"id": 7, "country": "Canada", "postal_code": "M6H 1E7",
+              "municipality": "The Annex", "address": "25 Muir Ave", "city": "Toronto"}
+    out = esc.investigate(
+        record=record, country_code="CA",
+        flag_hints=[FlagType.GUARDRAIL_BLOCKED], prior_search_log=[],
+    )
+    flag_types = {f.flag_type for f in out.flags}
+    # Undetectable flag must still be present as NEEDS_REVIEW
+    assert FlagType.GUARDRAIL_BLOCKED in flag_types
+    # No false "resolved" flag should be added
+    assert FlagType.RESOLVED_AFTER_ESCALATION not in flag_types
+
+
+def test_escalation_parses_markdown_fenced_json(mock_llm):
+    """When the LLM wraps JSON in triple-backtick fences the resolved fields must
+    still be applied to the output record."""
+    from cleaning.escalation import EscalationAgent
+    from cleaning.cache import WebSearchCache
+    from cleaning.flags import FlagType
+
+    fenced_response = (
+        "```json\n"
+        '{"country": "Germany", "postal_code": "10115", '
+        '"municipality": "Berlin Mitte", "validation_notes": "resolved via fenced json"}'
+        "\n```"
+    )
+    mock_llm.messages_create.return_value = _mock_response(text=fenced_response)
+    esc = EscalationAgent(llm_client=mock_llm, web_cache=WebSearchCache(),
+                          tools=[{"name": "web_search"}])
+    record = {"id": 9, "country": "", "postal_code": "", "municipality": "",
+              "address": "Invalidenstr. 1", "city": "Berlin"}
+    out = esc.investigate(
+        record=record, country_code=None,
+        flag_hints=[FlagType.UNKNOWN_COUNTRY], prior_search_log=[],
+    )
+    assert out.cleaned_record["country"] == "Germany"
+    assert out.cleaned_record["postal_code"] == "10115"
+    assert out.cleaned_record["municipality"] == "Berlin Mitte"
