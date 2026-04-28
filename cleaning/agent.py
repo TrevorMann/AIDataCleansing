@@ -127,7 +127,7 @@ class CleaningAgent:
                     record=merged,
                     country_code=self.country_code,
                     flag_hints=flag_hints,
-                    prior_search_log=self._search_log,
+                    prior_search_log=list(self._search_log),
                 )
                 if escalated is not None:
                     out = escalated
