@@ -1,0 +1,85 @@
+domain: real_estate
+version: 1.0
+
+config:
+  # Global defaults for real_estate domain
+  spell_check_threshold: 0.85
+  fuzzy_match_threshold: 0.90
+  nominatim_rate_limit: 1
+  web_search_timeout: 5
+
+skills:
+  spell_checker:
+    class: skills.real_estate.spell_checker.SpellChecker
+    tools:
+      - spell_check_dictionary
+      - fuzzy_matcher
+    config:
+      threshold: 0.85
+      domain_dictionary: real_estate
+    cost: low
+    latency_estimate_ms: 100
+    depends_on: []
+
+  address_standardizer:
+    class: skills.real_estate.address_standardizer.AddressStandardizer
+    tools:
+      - standardize_address
+      - expand_abbreviations
+    config:
+      strip_unit_numbers: false
+      expand_directionals: true
+    cost: low
+    latency_estimate_ms: 50
+    depends_on: []
+
+  fuzzy_matcher:
+    class: skills.real_estate.fuzzy_matcher.FuzzyMatcher
+    tools:
+      - levenshtein_distance
+      - token_matcher
+    config:
+      threshold: 0.90
+      token_weight: 0.5
+    cost: low
+    latency_estimate_ms: 150
+    depends_on: []
+
+  municipality_authority:
+    class: skills.real_estate.municipality_authority.MunicipalityAuthorityAgent
+    tools:
+      - fsa_lookup
+      - boundary_checker
+      - web_search
+      - confidence_scorer
+    config:
+      trust_postal_over_name: true
+      escalate_confidence_threshold: 0.60
+    cost: high
+    latency_estimate_ms: 1000
+    depends_on: [address_standardizer]
+
+  geographic_validator:
+    class: skills.real_estate.geographic_validator.GeographicValidator
+    tools:
+      - hierarchy_validator
+      - boundary_checker
+      - postal_validator
+    config:
+      strict_mode: false
+    cost: medium
+    latency_estimate_ms: 500
+    depends_on: [municipality_authority]
+
+  data_quality_triage:
+    class: skills.real_estate.data_quality_triage.DataQualityTriageAgent
+    tools:
+      - confidence_scorer
+      - completeness_analyzer
+      - pattern_validator
+    config:
+      min_confidence_auto_complete: 0.85
+      min_confidence_agent_review: 0.60
+    cost: medium
+    latency_estimate_ms: 300
+    depends_on: [geographic_validator]
