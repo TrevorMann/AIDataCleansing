@@ -90,5 +90,57 @@ def test_address_standardizer_skill():
     assert "Avenue" in result["address"]
 
 
+def test_fuzzy_matcher_exact_match():
+    """Test FuzzyMatcher with exact match."""
+    registry = SkillRegistry.load("real_estate")
+    fuzzy = registry.get("fuzzy_matcher")
+
+    similarity, decision = fuzzy.match("25 Muir Avenue", "25 Muir Avenue")
+    assert similarity == 1.0
+    assert decision["confidence"] == 1.0
+
+
+def test_fuzzy_matcher_variant():
+    """Test FuzzyMatcher with address variants."""
+    registry = SkillRegistry.load("real_estate")
+    fuzzy = registry.get("fuzzy_matcher")
+
+    # Should match "Ave" vs "Avenue" (tokens match, just abbreviation difference)
+    similarity, decision = fuzzy.match("25 Muir Ave", "25 Muir Avenue")
+    assert similarity >= 0.60  # Should be reasonable similarity
+
+
+def test_fuzzy_matcher_different():
+    """Test FuzzyMatcher with different addresses."""
+    registry = SkillRegistry.load("real_estate")
+    fuzzy = registry.get("fuzzy_matcher")
+
+    similarity, decision = fuzzy.match("123 Main St", "456 Queen Ave")
+    assert similarity < 0.5  # Should be low similarity
+
+
+def test_orchestration_team():
+    """Test OrchestrationTeam agent pipeline."""
+    from cleaning.orchestrator_v2 import OrchestrationTeam
+
+    registry = SkillRegistry.load("real_estate")
+    team = OrchestrationTeam(registry)
+
+    record = {
+        "id": 1,
+        "address": "123 Muir Ave",
+        "city": "toronot",
+        "municipality": "scarbbrough",
+    }
+
+    result = team.process_record(record)
+
+    # Should have agent decisions logged
+    assert "_agent_decisions" in result or any(key.startswith("_") for key in result.keys())
+    # Spelling should be corrected
+    assert result.get("city") == "toronto"
+    assert result.get("municipality") == "scarborough"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
