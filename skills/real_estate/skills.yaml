@@ -10,7 +10,8 @@ config:
 
 skills:
   spell_checker:
-    class: skills.real_estate.spell_checker.SpellChecker
+    class: skills.real_estate.spell_checker.spell_checker.SpellChecker
+    skill_doc: skills/real_estate/spell_checker/skill.md
     tools:
       - spell_check_dictionary
       - fuzzy_matcher
@@ -22,7 +23,8 @@ skills:
     depends_on: []
 
   address_standardizer:
-    class: skills.real_estate.address_standardizer.AddressStandardizer
+    class: skills.real_estate.address_standardizer.address_standardizer.AddressStandardizer
+    skill_doc: skills/real_estate/address_standardizer/skill.md
     tools:
       - standardize_address
       - expand_abbreviations
@@ -34,7 +36,8 @@ skills:
     depends_on: []
 
   fuzzy_matcher:
-    class: skills.real_estate.fuzzy_matcher.FuzzyMatcher
+    class: skills.real_estate.fuzzy_matcher.fuzzy_matcher.FuzzyMatcher
+    skill_doc: skills/real_estate/fuzzy_matcher/skill.md
     tools:
       - levenshtein_distance
       - token_matcher
@@ -46,11 +49,11 @@ skills:
     depends_on: []
 
   municipality_authority:
-    class: skills.real_estate.municipality_authority.MunicipalityAuthorityAgent
+    class: skills.real_estate.municipality_authority.municipality_authority.MunicipalityAuthorityAgent
+    skill_doc: skills/real_estate/municipality_authority/skill.md
     tools:
       - fsa_lookup
       - boundary_checker
-      - web_search
       - confidence_scorer
     config:
       trust_postal_over_name: true
@@ -60,7 +63,8 @@ skills:
     depends_on: [address_standardizer]
 
   geographic_validator:
-    class: skills.real_estate.geographic_validator.GeographicValidator
+    class: skills.real_estate.geographic_validator.geographic_validator.GeographicValidator
+    skill_doc: skills/real_estate/geographic_validator/skill.md
     tools:
       - hierarchy_validator
       - boundary_checker
@@ -72,7 +76,8 @@ skills:
     depends_on: [municipality_authority]
 
   data_quality_triage:
-    class: skills.real_estate.data_quality_triage.DataQualityTriageAgent
+    class: skills.real_estate.data_quality_triage.data_quality_triage.DataQualityTriageAgent
+    skill_doc: skills/real_estate/data_quality_triage/skill.md
     tools:
       - confidence_scorer
       - completeness_analyzer

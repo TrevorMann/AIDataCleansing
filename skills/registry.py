@@ -78,10 +78,22 @@ class SkillRegistry:
         skill_instance = skill_class(merged_config)
         skill_instance.domain = domain
 
+        # Load skill documentation (markdown)
+        skill_doc = None
+        skill_doc_path = skill_def.get("skill_doc")
+        if skill_doc_path:
+            try:
+                doc_full_path = Path(__file__).parent.parent / skill_doc_path
+                with open(doc_full_path) as f:
+                    skill_doc = f.read()
+            except Exception:
+                pass  # Skill doc optional
+
         # Store instance and metadata
         self.skills[skill_name] = skill_instance
         self.metadata[skill_name] = {
             "class": class_path,
+            "skill_doc": skill_doc,  # Full markdown content
             "tools": skill_def.get("tools", []),
             "cost": skill_def.get("cost", "medium"),
             "latency_estimate_ms": skill_def.get("latency_estimate_ms", 500),
@@ -110,6 +122,20 @@ class SkillRegistry:
     def list_skills(self) -> list:
         """List all registered skill names."""
         return list(self.skills.keys())
+
+    def get_skill_documentation(self, skill_name: str) -> Optional[str]:
+        """Get skill documentation (markdown) for LLM reasoning.
+
+        Args:
+            skill_name: Name of skill
+
+        Returns:
+            Skill documentation markdown or None
+        """
+        meta = self.metadata.get(skill_name)
+        if meta:
+            return meta.get("skill_doc")
+        return None
 
     def __repr__(self):
         return f"SkillRegistry({len(self.skills)} skills: {', '.join(self.list_skills())})"
