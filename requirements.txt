@@ -1,0 +1,5 @@
+anthropic>=0.40
+psycopg[binary]>=3.2
+requests>=2.32
+beautifulsoup4>=4.12
+pyshp>=2.3
