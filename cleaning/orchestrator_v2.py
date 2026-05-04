@@ -38,10 +38,14 @@ class OrchestrationTeam:
         self.registry = registry
 
         # Create specialized agents
+        fuzzy_skill = registry.get("fuzzy_matcher")
+        tools = {"fuzzy_matcher": fuzzy_skill} if fuzzy_skill else {}
+
         self.address_cleaner = BaseAgent(
             name="AddressCleaningAgent",
             skills=["spell_checker", "address_standardizer", "fuzzy_matcher"],
             registry=registry,
+            tools=tools,
         )
 
         self.geographic_validator = BaseAgent(

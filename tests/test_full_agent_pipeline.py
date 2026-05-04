@@ -290,5 +290,17 @@ def test_fuzzy_matches_full_variant():
     assert sim >= 0.90
 
 
+from skills.real_estate.spell_checker.spell_checker import SpellChecker
+
+
+def test_spell_checker_uses_fuzzy_for_short_typo():
+    fm = FuzzyMatcher({"threshold": 0.60})
+    sc = SpellChecker({"threshold": 0.60})
+    # "scarb" is not in exact corrections dict, needs fuzzy to find "scarborough"
+    corrected, decision = sc._correct_text("scarb", "city", {"fuzzy_matcher": fm})
+    assert corrected.lower() == "scarborough", f"Expected scarborough, got {corrected}"
+    assert decision is not None
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

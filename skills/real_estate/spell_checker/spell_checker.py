@@ -101,28 +101,34 @@ class SpellChecker(BaseSkill):
             )
 
         # Check for close matches using fuzzy matching if tools available
-        if "fuzzy_matcher" in tools:
-            for wrong, right in self.corrections.items():
-                similarity = self._similarity(text_lower, wrong)
-                if similarity >= self.threshold:
-                    return (
-                        right.title() if text[0].isupper() else right,
-                        self.log_decision(
-                            f"Corrected {field}: '{text}' → '{right}'",
-                            f"Fuzzy match (similarity: {similarity:.2f})",
-                            confidence=similarity,
-                        ),
-                    )
+        fuzzy_matcher = tools.get("fuzzy_matcher") if tools else None
+        if fuzzy_matcher:
+            best_match = None
+            best_score = 0.0
+            # Build candidate pairs: (comparison_target, correction_result)
+            # Include both misspelling keys and correct forms as comparison targets
+            unique_rights = {r for r in self.corrections.values()}
+            candidates = list(self.corrections.items())
+            for right in unique_rights:
+                candidates.append((right, right))
+            for wrong, right in candidates:
+                # For prefix matches (e.g. "scarb" is prefix of "scarborough"), use
+                # Dice-coefficient-style score: 2*len(prefix)/(len(prefix)+len(target))
+                if len(text_lower) < len(wrong) and wrong.startswith(text_lower):
+                    similarity = 2 * len(text_lower) / (len(text_lower) + len(wrong))
+                else:
+                    similarity = fuzzy_matcher.compare(text_lower, wrong)
+                if similarity >= self.threshold and similarity > best_score:
+                    best_match = right
+                    best_score = similarity
+            if best_match:
+                return (
+                    best_match.title() if text[0].isupper() else best_match,
+                    self.log_decision(
+                        f"Corrected {field}: '{text}' → '{best_match}'",
+                        f"Fuzzy match (similarity: {best_score:.2f})",
+                        confidence=best_score,
+                    ),
+                )
 
         return text, None
-
-    @staticmethod
-    def _similarity(s1: str, s2: str) -> float:
-        """Simple similarity measure (Levenshtein-like)."""
-        if s1 == s2:
-            return 1.0
-        if len(s1) == 0 or len(s2) == 0:
-            return 0.0
-        # Simplified: just check prefix + suffix match
-        common = sum(1 for a, b in zip(s1, s2) if a == b)
-        return common / max(len(s1), len(s2))
