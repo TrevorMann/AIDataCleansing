@@ -71,6 +71,9 @@ class FuzzyMatcher(BaseSkill):
 
         Returns:
             Canonicalized address string for comparison
+
+        Note: all abbreviations (st, saint, ave, etc.) are normalized to their expanded
+        forms for comparison purposes only. Do not use the output for display or storage.
         """
         text = text.lower().strip()
         text = re.sub(r"[,.]", " ", text)
@@ -80,7 +83,6 @@ class FuzzyMatcher(BaseSkill):
         for i, tok in enumerate(tokens):
             if tok == "st":
                 # Both "st <Proper>" (saint) and "Main st" (street) normalize to "street"
-                next_tok = tokens[i + 1] if i + 1 < len(tokens) else ""  # noqa: F841
                 out.append("street")
             elif tok in _CANON_MAP:
                 out.append(_CANON_MAP[tok])
