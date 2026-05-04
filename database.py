@@ -67,6 +67,29 @@ def init_db(db_path: str) -> None:
     )
     ''')
 
+    # flags table — queryable record of unresolved or noteworthy issues per record.
+    # Schema documented in: docs/superpowers/specs/2026-04-27-data-cleaning-c-hybrid-refactor-design.md §5.3
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS flags (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        raw_data_id     INTEGER NOT NULL,
+        cleaned_data_id INTEGER,
+        flag_type       TEXT NOT NULL,
+        severity        TEXT NOT NULL,
+        reason          TEXT NOT NULL,
+        raised_by       TEXT NOT NULL,
+        raised_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        resolved_at     TIMESTAMP,
+        resolved_by     TEXT,
+        resolution_note TEXT,
+        FOREIGN KEY (raw_data_id) REFERENCES raw_data(id),
+        FOREIGN KEY (cleaned_data_id) REFERENCES cleaned_data(id)
+    )
+    ''')
+    cursor.execute('''
+    CREATE INDEX IF NOT EXISTS idx_flags_unresolved ON flags(resolved_at) WHERE resolved_at IS NULL
+    ''')
+
     # column_metadata table - human-readable descriptions for each column,
     # used to build Claude tool schemas at runtime without hardcoding
     cursor.execute('''
