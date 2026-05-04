@@ -12,13 +12,23 @@ def registry():
 
 
 def test_decisions_log_isolated_per_record(registry):
+    """Each execute() call must only see its own decisions, not prior calls'."""
     agent = BaseAgent("X", ["spell_checker"], registry)
-    rec1 = {"municipality": "scarbbrough"}
-    rec2 = {"municipality": "Toronto"}
+    rec1 = {"municipality": "scarbbrough"}   # gets corrected → decision logged
+    rec2 = {"municipality": "toronot"}       # also gets corrected → different decision
+
     agent.execute(rec1)
-    agent.execute(rec2)
-    # rec2 must not contain rec1's decisions
-    assert all("scarbbrough" not in d.get("decision","") for d in rec2.get("_decisions", []))
+    result2 = agent.execute(rec2)
+
+    # rec2's _decisions must NOT contain rec1's correction
+    decisions2 = result2.get("_decisions", [])
+    assert not any("scarbbrough" in d.get("decision", "") for d in decisions2), (
+        "rec1 decision leaked into rec2 — decisions_log not scoped per record"
+    )
+    # rec2 must have its own correction
+    assert any("toronot" in d.get("decision", "") for d in decisions2), (
+        "rec2 missing its own correction decision"
+    )
 
 
 def test_municipality_authority_fsa_match():
