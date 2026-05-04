@@ -120,7 +120,7 @@ def test_data_quality_triage_complete_high_confidence():
     result = triage.run(record)
 
     assert result.get("_triage_route") == "done"
-    assert result.get("_triage_confidence") > 0.85
+    assert result.get("_triage_confidence") >= 0.85
 
 
 def test_data_quality_triage_incomplete():
@@ -226,6 +226,68 @@ def test_full_pipeline_batch():
     assert report.records_processed == 3
     assert report.cleaned_count == 3
     assert "agent team" in report.summary_text.lower()
+
+
+from skills.real_estate.address_standardizer.address_standardizer import AddressStandardizer
+from skills.real_estate.fuzzy_matcher.fuzzy_matcher import FuzzyMatcher
+from skills.real_estate.data_quality_triage.data_quality_triage import DataQualityTriageAgent
+
+
+def test_triage_uses_min_confidence():
+    triage = DataQualityTriageAgent()
+    rec = {
+        "_municipality_confidence": 0.5,
+        "_geographic_validated": True,
+        "_agent_decisions": [],
+        "address": "123 Main St",
+        "city": "Toronto",
+        "postal_code": "M1A1B1",
+        "municipality": "Scarborough",
+        "country": "CA",
+    }
+    out = triage.run(rec)
+    # With avg: (0.5 + 0.85 + 0.9) / 3 = 0.75 — would pass this assertion wrongly
+    # With min: min(0.5, 0.85, 0.9) = 0.5 — correctly low
+    assert out["_triage_data_confidence"] <= 0.6, (
+        f"Expected min-based confidence ~0.5, got {out['_triage_data_confidence']:.3f} — "
+        "looks like average is still being used"
+    )
+
+
+def test_quadrant_ne_expanded():
+    s = AddressStandardizer()
+    result = s._standardize("123 Main St NE")
+    assert "Northeast" in result
+
+
+def test_quadrant_nw_expanded():
+    s = AddressStandardizer()
+    result = s._standardize("456 Pine Rd NW")
+    assert "Northwest" in result
+
+
+def test_single_letter_directional_not_expanded():
+    s = AddressStandardizer()
+    out = s._standardize("123 Doe N Main St")
+    assert "North" not in out, f"Single-letter N must not expand. Got: {out}"
+
+
+def test_fuzzy_matches_st_to_street():
+    fm = FuzzyMatcher({"threshold": 0.85})
+    sim = fm.compare("123 Main st", "123 main street")
+    assert sim >= 0.85
+
+
+def test_fuzzy_matches_saint_catherine():
+    fm = FuzzyMatcher({"threshold": 0.85})
+    sim = fm.compare("st Catherine", "saint catherine")
+    assert sim >= 0.85
+
+
+def test_fuzzy_matches_full_variant():
+    fm = FuzzyMatcher({"threshold": 0.85})
+    sim = fm.compare("123 Main st, st Catherine", "123 main street, saint catherine")
+    assert sim >= 0.90
 
 
 if __name__ == "__main__":

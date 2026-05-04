@@ -91,8 +91,8 @@ class DataQualityTriageAgent(BaseSkill):
         if record.get("_geographic_validated"):
             scores.append(0.85)
 
-        # Average of all signals
-        return sum(scores) / len(scores) if scores else 0.5
+        # Weakest-link: min of all signals
+        return min(scores) if scores else 0.5
 
     def _make_triage_decision(self, completeness: float, confidence: float, corrections: int) -> Dict:
         """Make routing decision.
