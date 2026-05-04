@@ -1,6 +1,6 @@
 """Base agent class for specialized agent team members."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 from skills.base import BaseSkill
 
 
@@ -39,6 +39,7 @@ class BaseAgent:
             record = skill.run(record, self.tools)
             if "_decisions" in record:
                 record_decisions.extend(record["_decisions"])
+                del record["_decisions"]  # consume so next skill starts clean
         record["_decisions"] = record_decisions
         return record
 
