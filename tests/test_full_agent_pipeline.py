@@ -2,7 +2,23 @@
 
 import pytest
 from skills.registry import SkillRegistry
+from skills.agent import BaseAgent
 from cleaning.orchestrator_v2 import OrchestrationTeam, run_cleaning_workflow_v2
+
+
+@pytest.fixture
+def registry():
+    return SkillRegistry.load("real_estate")
+
+
+def test_decisions_log_isolated_per_record(registry):
+    agent = BaseAgent("X", ["spell_checker"], registry)
+    rec1 = {"municipality": "scarbbrough"}
+    rec2 = {"municipality": "Toronto"}
+    agent.execute(rec1)
+    agent.execute(rec2)
+    # rec2 must not contain rec1's decisions
+    assert all("scarbbrough" not in d.get("decision","") for d in rec2.get("_decisions", []))
 
 
 def test_municipality_authority_fsa_match():
