@@ -12,7 +12,6 @@ class AddressStandardizer(BaseSkill):
         super().__init__(config)
         self.domain = "real_estate"
         self.strip_unit_numbers = self.config.get("strip_unit_numbers", False)
-        self.expand_directionals = self.config.get("expand_directionals", True)
 
         # Street type abbreviations to expand
         self.street_types = {
@@ -33,16 +32,14 @@ class AddressStandardizer(BaseSkill):
             r"\bsq\b": "Square",
         }
 
-        # Directional abbreviations
-        self.directionals = {
-            r"\be\b": "East",
-            r"\bw\b": "West",
-            r"\bn\b": "North",
-            r"\bs\b": "South",
-            r"\bne\b": "Northeast",
-            r"\bnw\b": "Northwest",
-            r"\bse\b": "Southeast",
-            r"\bsw\b": "Southwest",
+        # Quadrant abbreviations only — single-letter directionals (N/E/S/W) are
+        # intentionally NOT expanded because \bN\b matches "N" anywhere in a token
+        # sequence and produces false expansions (e.g. "123 Doe N Main" → "North Main").
+        self.quadrants = {
+            r"\bNE\b": "Northeast",
+            r"\bNW\b": "Northwest",
+            r"\bSE\b": "Southeast",
+            r"\bSW\b": "Southwest",
         }
 
     def run(self, input_data: Dict[str, Any], tools: Dict[str, Any] = None) -> Dict[str, Any]:
@@ -86,14 +83,13 @@ class AddressStandardizer(BaseSkill):
             # Remove apt/unit numbers: "123 Main St, Apt 456" → "123 Main St"
             address = re.sub(r",?\s*(apt|apt\.|unit|unit\.|#)\s*\w+", "", address, flags=re.IGNORECASE)
 
+        # Expand quadrant abbreviations FIRST (before street types, to avoid token interference)
+        for abbr, full in self.quadrants.items():
+            address = re.sub(abbr, full, address, flags=re.IGNORECASE)
+
         # Expand street type abbreviations (case-insensitive)
         for abbr, full in self.street_types.items():
             address = re.sub(abbr, full, address, flags=re.IGNORECASE)
-
-        # Expand directional abbreviations
-        if self.expand_directionals:
-            for abbr, full in self.directionals.items():
-                address = re.sub(abbr, full, address, flags=re.IGNORECASE)
 
         # Normalize spacing
         address = " ".join(address.split())

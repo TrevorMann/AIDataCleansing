@@ -1,63 +1,86 @@
 # Fuzzy Matcher Skill
 
 ## Purpose
-Detect address variants and similarities using fuzzy matching.
-Identifies when two addresses are likely the same (e.g., "25 Muir Ave" vs "25 Muir Avenue").
-Enables deduplication and record linking.
+Compare two address strings that may be written differently and score their similarity.
+Canonicalizes abbreviations before scoring so variants like "123 Main st" and "123 main street",
+or "st Catherine" and "saint catherine", score as near-identical.
+Enables cross-record deduplication and record linking without requiring prior standardization.
 
 ## When to Use
-- **DO**: After standardization (standardized forms match better)
-- **DO**: For deduplication (find duplicate records)
-- **DO**: For record linking (match variants across systems)
-- **DON'T**: Before standardization (abbreviations confuse matching)
-- **DON'T**: On raw, unclean data (typos lower scores)
+- **DO**: Call `compare(text1, text2)` to get a similarity score between any two address strings
+- **DO**: Pass `candidates` list via `tools` to `run()` for cross-record matching in batch pipelines
+- **DO**: Use on raw or lightly-cleaned data — `_canonicalize()` handles common abbreviation variants
+- **DON'T**: Use `match()` when `compare()` suffices — `match()` is for legacy exact/fuzzy decisions only
+- **DON'T**: Expect perfect results on heavily misspelled data (canonicalization is rule-based, not ML)
 
-## Input
+## Public API
+
+### `compare(text1, text2) -> float`
+Main entry point. Canonicalizes both strings, then computes similarity.
+```python
+fm = FuzzyMatcher({"threshold": 0.85})
+sim = fm.compare("123 Main st", "123 main street")   # → 1.0
+sim = fm.compare("st Catherine", "saint catherine")  # → 1.0
+```
+
+### `run(input_data, tools=None) -> dict`
+Cross-record matching. Compares `input_data["address"]` against a list of candidate records.
+Candidates are passed via `tools["candidates"]` — a list of dicts with `"address"` and `"id"` keys.
+Matches above threshold are appended to `input_data["_address_match_candidates"]`.
+```python
+tools = {"candidates": [{"id": 2, "address": "123 main street"}]}
+result = fm.run({"address": "123 Main st"}, tools)
+# result["_address_match_candidates"] → [{"id": 2, "address": "123 main street", "similarity": 1.0}]
+```
+
+### `match(text1, text2) -> (float, dict)`
+Legacy API. Returns (similarity_score, decision_log). Use `compare()` instead for scoring.
+
+## Input / Output
+
+### `run()` Input
 ```python
 {
-  "address": str,  # Standardized address
+  "address": str,           # Address to match against candidates
+}
+```
+tools dict:
+```python
+{
+  "candidates": [           # List of records to compare against
+    {"id": any, "address": str},
+    ...
+  ]
 }
 ```
 
-## Output
+### `run()` Output
 ```python
 {
   "address": str,
-  "_address_fuzzy_confidence": float,  # Similarity score 0.0-1.0
+  "_address_match_candidates": [   # Only present when matches found
+    {"id": any, "address": str, "similarity": float},
+    ...
+  ],
+  "_decisions": [...],             # Decision log entries for each match
 }
 ```
 
-## Examples
-
-### Example 1: Exact Match
-```
-Input:  match("25 Muir Avenue", "25 Muir Avenue")
-Output: (confidence: 1.0, "Exact match")
-```
-
-### Example 2: Variant Match
-```
-Input:  match("25 Muir Ave", "25 Muir Avenue")
-Output: (confidence: 0.64, "Fuzzy match: similarity 0.64")
-```
-
-### Example 3: Different Addresses
-```
-Input:  match("123 Main St", "456 Queen Ave")
-Output: (confidence: 0.15, "No match: similarity below threshold")
-```
+## Canonicalization
+`_canonicalize()` applies before any comparison:
+1. Lowercase + strip
+2. Remove punctuation (commas, periods → spaces)
+3. Collapse whitespace
+4. Expand tokens: `st` → `street`, `saint` → `street`, `ave` → `avenue`, `blvd` → `boulevard`, etc.
 
 ## Matching Algorithm
-Two-stage scoring (token-based + character-based):
+Two-stage scoring (token-based + character-based) on canonicalized strings:
 
 1. **Token Matching** (word-level, 50% weight)
-   - Split into words, compare sets
-   - "25 Muir Avenue" → {"25", "muir", "avenue"}
    - Jaccard similarity of token sets
 
 2. **Character Matching** (Levenshtein, 50% weight)
    - Normalized Levenshtein distance
-   - Case-insensitive comparison
 
 Combined score = (0.5 × token_sim) + (0.5 × char_sim)
 
@@ -70,13 +93,12 @@ fuzzy_matcher:
 
 ## Constraints
 - Threshold 0.90 by default (high bar for matches)
-- Case-insensitive but preserves case in output
-- Token-based matching favors whole-word matches over character-level
-- No semantic understanding (doesn't know "Street" = "St")
+- Canonicalization is rule-based — does not handle arbitrary misspellings
+- `saint` and `st` both normalize to `street` for comparison purposes
 
 ## Dependencies
-- None (standalone)
+- None (standalone, pure Python)
 
 ## Complements
-- **Before**: AddressStandardizer (abbreviations must be expanded first)
-- **With**: DataQualityTriage (confidence scores inform triage decisions)
+- **With**: DataQualityTriage (similarity scores inform triage confidence)
+- **After**: AddressStandardizer (optional — canonicalization in this skill handles common cases)

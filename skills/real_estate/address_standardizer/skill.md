@@ -2,7 +2,7 @@
 
 ## Purpose
 Normalize address format for consistency and validation.
-Expands abbreviations (St→Street, Ave→Avenue, E→East) and strips unit numbers.
+Expands abbreviations (St→Street, Ave→Avenue, NE→Northeast) and strips unit numbers.
 Makes addresses machine-readable after spelling is corrected.
 
 ## When to Use
@@ -47,15 +47,15 @@ Input:  {"address": "25 Muir Ave, Apt 456"}
 Output: {"address": "25 Muir Avenue"}  # (if strip_unit_numbers=true)
 ```
 
-### Example 3: Expand Directionals
+### Example 3: Expand Quadrant Directionals
 ```
-Input:  {"address": "456 E Queen"}
-Output: {"address": "456 East Queen"}  # (if expand_directionals=true)
+Input:  {"address": "123 Main St NE"}
+Output: {"address": "123 Main Street Northeast"}
 ```
 
 ## Transformations
 - Street type abbreviations: St→Street, Ave→Avenue, Blvd→Boulevard, Rd→Road, Dr→Drive, Ln→Lane, Ct→Court, etc.
-- Directional abbreviations: E→East, W→West, N→North, S→South, NE→Northeast, etc.
+- Quadrant directionals: NE→Northeast, NW→Northwest, SE→Southeast, SW→Southwest
 - Unit/apt removal: ", Apt 123" / ", Unit 456" / ", #789" → removed
 - Whitespace normalization: Multiple spaces → single space
 
@@ -63,7 +63,6 @@ Output: {"address": "456 East Queen"}  # (if expand_directionals=true)
 ```yaml
 address_standardizer:
   strip_unit_numbers: false         # Remove apt/unit/# numbers
-  expand_directionals: true         # E→East, W→West, etc.
 ```
 
 ## Constraints
@@ -71,6 +70,10 @@ address_standardizer:
 - Cannot infer missing information
 - Cannot validate address exists
 - Case-insensitive but preserves original case pattern on output
+- Single-letter directionals (N, E, S, W) are intentionally NOT expanded: the
+  pattern `\bN\b` matches "N" anywhere in a token sequence and produces false
+  expansions (e.g. "123 Doe N Main" → "123 Doe North Main"). Quadrants only
+  (NE/NW/SE/SW) are unambiguous and safe to expand.
 
 ## Dependencies
 - None (standalone skill)

@@ -1,11 +1,25 @@
 """Fuzzy matching skill for real estate data variants."""
 
+import re
 from typing import Any, Dict, Optional, Tuple
 from skills.base import BaseSkill
 
 
+_CANON_MAP = {
+    "ave": "avenue", "blvd": "boulevard", "rd": "road",
+    "ln": "lane", "dr": "drive", "ct": "court", "pkwy": "parkway",
+    "ter": "terrace", "pl": "place", "sq": "square",
+    "saint": "street",  # normalize saint→street for comparison
+}
+
+
 class FuzzyMatcher(BaseSkill):
     """Match address/municipality variants (25 Muir Ave vs 25 Muir Avenue)."""
+
+    _known_street_words = {
+        "main", "king", "queen", "bay", "yonge", "dundas", "bloor",
+        "college", "avenue", "road", "drive", "lane",
+    }
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         super().__init__(config)
@@ -14,31 +28,79 @@ class FuzzyMatcher(BaseSkill):
         self.token_weight = self.config.get("token_weight", 0.5)
 
     def run(self, input_data: Dict[str, Any], tools: Dict[str, Any] = None) -> Dict[str, Any]:
-        """Fuzzy match and normalize variants.
+        """Cross-record fuzzy matching against candidate addresses passed via tools.
 
         Args:
-            input_data: Record dict
-            tools: Available tools
+            input_data: Record dict with at least an "address" field
+            tools: Dict optionally containing "candidates" list of records to compare against
 
         Returns:
-            Record with fuzzy match confidence
+            Record with "_address_match_candidates" and "_decisions" appended when matches found
         """
         tools = tools or {}
+        candidates = tools.get("candidates", [])
         decisions = []
 
-        # Match on address if present
-        if "address" in input_data and input_data.get("address"):
-            address = input_data["address"]
-            similarity = self._compute_similarity(address, address)
-            input_data["_address_fuzzy_confidence"] = similarity
+        address = input_data.get("address", "")
+        if address and candidates:
+            matches = []
+            for cand in candidates:
+                cand_addr = cand.get("address", "")
+                if not cand_addr:
+                    continue
+                sim = self.compare(address, cand_addr)
+                if sim >= self.threshold:
+                    matches.append({"id": cand.get("id"), "address": cand_addr, "similarity": round(sim, 3)})
+                    decisions.append(self.log_decision(
+                        f"Address match: '{address}' ≈ '{cand_addr}' (sim={sim:.3f})",
+                        "Canonicalized fuzzy match above threshold",
+                        confidence=sim,
+                    ))
+            if matches:
+                input_data["_address_match_candidates"] = matches
 
-        # Match on municipality if present
-        if "municipality" in input_data and input_data.get("municipality"):
-            municipality = input_data["municipality"]
-            similarity = self._compute_similarity(municipality, municipality)
-            input_data["_municipality_fuzzy_confidence"] = similarity
-
+        if decisions:
+            input_data.setdefault("_decisions", []).extend(decisions)
         return input_data
+
+    def _canonicalize(self, text: str) -> str:
+        """Normalize address text: lowercase, remove punctuation, expand abbreviations.
+
+        Args:
+            text: Raw address string
+
+        Returns:
+            Canonicalized address string for comparison
+        """
+        text = text.lower().strip()
+        text = re.sub(r"[,.]", " ", text)
+        text = " ".join(text.split())
+        tokens = text.split()
+        out = []
+        for i, tok in enumerate(tokens):
+            if tok == "st":
+                # Both "st <Proper>" (saint) and "Main st" (street) normalize to "street"
+                next_tok = tokens[i + 1] if i + 1 < len(tokens) else ""  # noqa: F841
+                out.append("street")
+            elif tok in _CANON_MAP:
+                out.append(_CANON_MAP[tok])
+            else:
+                out.append(tok)
+        return " ".join(out)
+
+    def compare(self, text1: str, text2: str) -> float:
+        """Compare two address strings after canonicalization.
+
+        Args:
+            text1: First address string
+            text2: Second address string
+
+        Returns:
+            Similarity score 0.0-1.0
+        """
+        c1 = self._canonicalize(text1)
+        c2 = self._canonicalize(text2)
+        return self._compute_similarity(c1, c2)
 
     def match(self, text1: str, text2: str) -> Tuple[float, Dict]:
         """Match two text strings, return confidence + explanation.
