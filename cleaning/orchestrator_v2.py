@@ -49,13 +49,15 @@ logger = logging.getLogger(__name__)
 class OrchestrationTeam:
     """Agent team for cleaning pipeline."""
 
-    def __init__(self, registry: SkillRegistry):
+    def __init__(self, registry: SkillRegistry, batch_budget: Optional["BatchBudget"] = None):
         """Initialize agent team with skills from registry.
 
         Args:
             registry: Loaded SkillRegistry for domain
+            batch_budget: Optional per-batch query budget for web search / LLM calls
         """
         self.registry = registry
+        self.batch_budget = batch_budget
 
         # Create specialized agents
         fuzzy_skill = registry.get("fuzzy_matcher")
@@ -79,6 +81,16 @@ class OrchestrationTeam:
             skills=["data_quality_triage"],
             registry=registry,
         )
+
+        # Web search enricher (optional — only if skill is registered)
+        self.web_enricher_agent = None
+        if registry.get("web_search_enricher"):
+            self.web_enricher_agent = BaseAgent(
+                name="WebSearchEnricherAgent",
+                skills=["web_search_enricher"],
+                registry=registry,
+                tools={"batch_budget": self.batch_budget} if self.batch_budget else {},
+            )
 
     def process_record(self, record: Dict[str, Any]) -> Dict[str, Any]:
         """Process record through agent team pipeline.
@@ -108,6 +120,13 @@ class OrchestrationTeam:
         if "_decisions" in record:
             decisions_log.extend(record["_decisions"])
             del record["_decisions"]
+
+        # Stage 4: Web search enrichment — only for needs_review records
+        if self.web_enricher_agent and record.get("_triage_route") == "needs_review":
+            record = self.web_enricher_agent.execute(record)
+            if "_decisions" in record:
+                decisions_log.extend(record["_decisions"])
+                del record["_decisions"]
 
         # Attach decisions log for audit trail
         if decisions_log:
