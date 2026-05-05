@@ -11,21 +11,18 @@ class SpellChecker(BaseSkill):
         super().__init__(config)
         self.domain = "real_estate"
         self.threshold = self.config.get("threshold", 0.85)
+        conn = self.config.get("pg_conn")
+        self.corrections = self._load_corrections(conn)
 
-        # Real estate domain dictionary - common misspellings
-        self.corrections = {
-            "scarbbrough": "scarborough",
-            "scarbrough": "scarborough",
-            "toronot": "toronto",
-            "north yokr": "north york",
-            "etobicoe": "etobicoke",
-            "yorl": "york",
-            "oakvile": "oakville",
-            "vaughn": "vaughan",
-            "postal cod": "postal code",
-            "provice": "province",
-            "municpality": "municipality",
-        }
+    def _load_corrections(self, conn) -> Dict[str, str]:
+        """Load corrections from DB if conn available, else empty dict."""
+        if conn is None:
+            return {}
+        try:
+            from cleaning.spell_corrections_data import get_corrections_dict
+            return get_corrections_dict(conn, self.domain)
+        except Exception:
+            return {}
 
     def run(self, input_data: Dict[str, Any], tools: Dict[str, Any] = None) -> Dict[str, Any]:
         """Fix spelling mistakes in address and municipality fields.

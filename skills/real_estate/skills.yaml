@@ -18,6 +18,7 @@ skills:
     config:
       threshold: 0.85
       domain_dictionary: real_estate
+      pg_conn: "${runtime.pg_conn}"
     cost: low
     latency_estimate_ms: 100
     depends_on: []
@@ -58,6 +59,7 @@ skills:
     config:
       trust_postal_over_name: true
       escalate_confidence_threshold: 0.60
+      pg_conn: "${runtime.pg_conn}"
     cost: high
     latency_estimate_ms: 1000
     depends_on: [address_standardizer]

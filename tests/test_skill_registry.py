@@ -50,14 +50,14 @@ def test_address_cleaning_agent():
 
     result = agent.execute(record)
 
-    # Should have corrected spelling and standardized address
-    assert result["city"] == "toronto"
-    assert result["municipality"] == "scarborough"
-    assert "Avenue" in result["address"]  # St→Street, Ave→Avenue
+    # No pg_conn → no spell corrections; address_standardizer still runs
+    assert result["city"] == "toronot"  # unchanged without DB
+    assert result["municipality"] == "scarbbrough"  # unchanged without DB
+    assert "Avenue" in result["address"]  # Ave→Avenue still works (deterministic)
 
 
-def test_spell_checker_skill():
-    """Test SpellChecker skill directly."""
+def test_spell_checker_no_conn_no_corrections():
+    """SpellChecker without pg_conn loads empty dict — no corrections made."""
     registry = SkillRegistry.load("real_estate")
     spell_checker = registry.get("spell_checker")
 
@@ -69,7 +69,30 @@ def test_spell_checker_skill():
 
     result = spell_checker.run(record)
 
-    # Check corrections were made
+    # No pg_conn → corrections dict empty → values unchanged
+    assert result["city"] == "toronot"
+    assert result["municipality"] == "scarbbrough"
+
+
+def test_spell_checker_with_injected_corrections():
+    """SpellChecker with corrections injected via mock conn corrects fields."""
+    from unittest.mock import MagicMock
+    from skills.real_estate.spell_checker.spell_checker import SpellChecker
+
+    # Patch get_corrections_dict to return known data without a real DB
+    with __import__("unittest.mock", fromlist=["patch"]).patch(
+        "cleaning.spell_corrections_data.get_corrections_dict",
+        return_value={
+            "scarbbrough": "scarborough",
+            "toronot": "toronto",
+        },
+    ):
+        mock_conn = MagicMock()
+        spell_checker = SpellChecker({"pg_conn": mock_conn, "threshold": 0.85})
+
+    record = {"city": "toronot", "municipality": "scarbbrough"}
+    result = spell_checker.run(record)
+
     assert result["city"] == "toronto"
     assert result["municipality"] == "scarborough"
     assert "_decisions" in result
@@ -137,9 +160,9 @@ def test_orchestration_team():
 
     # Should have agent decisions logged
     assert "_agent_decisions" in result or any(key.startswith("_") for key in result.keys())
-    # Spelling should be corrected
-    assert result.get("city") == "toronto"
-    assert result.get("municipality") == "scarborough"
+    # No pg_conn → spell corrections skip; values unchanged
+    assert result.get("city") == "toronot"
+    assert result.get("municipality") == "scarbbrough"
 
 
 if __name__ == "__main__":

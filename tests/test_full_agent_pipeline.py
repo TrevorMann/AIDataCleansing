@@ -1,9 +1,21 @@
 """End-to-end tests for full agent team pipeline."""
 
 import pytest
+from unittest.mock import patch, MagicMock
 from skills.registry import SkillRegistry
 from skills.agent import BaseAgent
 from cleaning.orchestrator_v2 import OrchestrationTeam, run_cleaning_workflow_v2
+
+_REAL_ESTATE_CORRECTIONS = {
+    "scarbbrough": "scarborough",
+    "scarbrough": "scarborough",
+    "toronot": "toronto",
+    "north yokr": "north york",
+    "etobicoe": "etobicoke",
+    "yorl": "york",
+    "oakvile": "oakville",
+    "vaughn": "vaughan",
+}
 
 
 @pytest.fixture
@@ -13,7 +25,9 @@ def registry():
 
 def test_decisions_log_isolated_per_record(registry):
     """Each execute() call must only see its own decisions, not prior calls'."""
-    agent = BaseAgent("X", ["spell_checker"], registry)
+    with patch("cleaning.spell_corrections_data.get_corrections_dict", return_value=_REAL_ESTATE_CORRECTIONS):
+        registry_with_conn = SkillRegistry.load("real_estate", runtime={"pg_conn": MagicMock()})
+    agent = BaseAgent("X", ["spell_checker"], registry_with_conn)
     rec1 = {"municipality": "scarbbrough"}   # gets corrected → decision logged
     rec2 = {"municipality": "toronot"}       # also gets corrected → different decision
 
@@ -143,7 +157,8 @@ def test_data_quality_triage_incomplete():
 
 def test_full_pipeline_messy_record():
     """Test full agent team pipeline on messy record."""
-    registry = SkillRegistry.load("real_estate")
+    with patch("cleaning.spell_corrections_data.get_corrections_dict", return_value=_REAL_ESTATE_CORRECTIONS):
+        registry = SkillRegistry.load("real_estate", runtime={"pg_conn": MagicMock()})
     team = OrchestrationTeam(registry)
 
     # Messy record with spelling errors and incomplete data
@@ -161,10 +176,6 @@ def test_full_pipeline_messy_record():
 
     # Should have corrected spelling
     assert result["city"] == "toronto"
-
-    # No pg_conn → municipality resolution skips gracefully, value unchanged
-    assert result["municipality"] == "Humber Summit"
-    assert result.get("_municipality_confidence", 0.0) == 0.0
 
     # Should have triage decision
     assert "_triage_route" in result
@@ -298,8 +309,9 @@ from skills.real_estate.spell_checker.spell_checker import SpellChecker
 
 def test_spell_checker_uses_fuzzy_for_short_typo():
     fm = FuzzyMatcher({"threshold": 0.60})
-    sc = SpellChecker({"threshold": 0.60})
-    # "scarb" is not in exact corrections dict, needs fuzzy to find "scarborough"
+    with patch("cleaning.spell_corrections_data.get_corrections_dict", return_value=_REAL_ESTATE_CORRECTIONS):
+        sc = SpellChecker({"threshold": 0.60, "pg_conn": MagicMock()})
+    # "scarb" is not an exact key, needs fuzzy to find "scarborough"
     corrected, decision = sc._correct_text("scarb", "city", {"fuzzy_matcher": fm})
     assert corrected.lower() == "scarborough", f"Expected scarborough, got {corrected}"
     assert decision is not None

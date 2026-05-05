@@ -1,0 +1,12 @@
+wrong,right,source,confidence
+scarbbrough,scarborough,manual_seed,1.0
+scarbrough,scarborough,manual_seed,1.0
+toronot,toronto,manual_seed,1.0
+north yokr,north york,manual_seed,1.0
+etobicoe,etobicoke,manual_seed,1.0
+yorl,york,manual_seed,1.0
+oakvile,oakville,manual_seed,1.0
+vaughn,vaughan,manual_seed,1.0
+postal cod,postal code,manual_seed,1.0
+provice,province,manual_seed,1.0
+municpality,municipality,manual_seed,1.0
