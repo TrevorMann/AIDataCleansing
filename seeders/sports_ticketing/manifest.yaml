@@ -1,0 +1,8 @@
+domain: sports_ticketing
+description: "Seeders for sports_ticketing domain"
+schema_migrations: []
+seeders: []
+  # - name: example_seeder
+  #   class: seeders.sports_ticketing.example.ExampleSeeder
+  #   enabled: true
+  #   license: "..."

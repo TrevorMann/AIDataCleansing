@@ -3,6 +3,7 @@
 
 # Python
 venv/
+.venv-win/
 __pycache__/
 *.pyc
 *.pyo
@@ -18,7 +19,6 @@ debug_api.py
 test_direct.py
 test_sdk.py
 debug_output.txt
-scripts/
 
 # IDE
 .vscode/
@@ -29,4 +29,4 @@ scripts/
 Thumbs.db
 
 # Git worktrees
-.worktrees/
+

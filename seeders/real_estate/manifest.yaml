@@ -1,0 +1,29 @@
+domain: real_estate
+description: "Real estate data seeders — Toronto/Canada focus"
+schema_migrations:
+  - db/migrations/001_municipality_tables.sql
+  - db/migrations/003_spell_corrections.sql
+seeders:
+  - name: wikipedia_fsa
+    class: seeders.real_estate.wikipedia_fsa.WikipediaFSASeeder
+    enabled: true
+    refresh_cadence: monthly
+    license: "CC BY-SA (Wikipedia)"
+    config:
+      rate_limit_seconds: 0.5
+
+  - name: statscan_shapefile
+    class: seeders.real_estate.statscan_shapefile.StatsCanShapefileSeeder
+    enabled: false
+    refresh_cadence: yearly
+    license: "Statistics Canada Open License"
+    config:
+      shapefile_path: "data/raw/lcsd000a21a_e/lcsd000a21a_e.shp"
+
+  - name: spell_corrections
+    class: seeders.real_estate.spell_corrections.SpellCorrectionsSeeder
+    enabled: true
+    refresh_cadence: as_needed
+    license: "internal"
+    config:
+      seed_csv: "data/seeds/real_estate/spell_corrections.csv"
