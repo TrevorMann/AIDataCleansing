@@ -13,19 +13,22 @@ class SkillRegistry:
         self.skills: Dict[str, Any] = {}  # {skill_name} → SkillClass instance
         self.metadata: Dict[str, Dict] = {}  # {skill_name} → metadata dict
         self.config: Dict[str, Any] = {}  # merged config
+        self.runtime: Dict[str, Any] = {}  # runtime resources (e.g. pg_conn)
 
     @classmethod
-    def load(cls, domain: str, config_path: Optional[str] = None) -> "SkillRegistry":
+    def load(cls, domain: str, config_path: Optional[str] = None, runtime: Optional[Dict] = None) -> "SkillRegistry":
         """Load all skills for domain at startup (single load, reuse across batch).
 
         Args:
             domain: Domain name (e.g., 'real_estate')
             config_path: Optional custom config path
+            runtime: Optional runtime resources dict (e.g. {"pg_conn": conn})
 
         Returns:
             Populated registry instance
         """
         registry = cls()
+        registry.runtime = runtime or {}
         registry.load_domain(domain, config_path)
         return registry
 
@@ -73,6 +76,12 @@ class SkillRegistry:
         # Merge config: defaults + domain + skill-specific
         merged_config = {**self.config}
         merged_config.update(skill_def.get("config", {}))
+
+        # Resolve runtime placeholders like "${runtime.pg_conn}"
+        for k, v in list(merged_config.items()):
+            if isinstance(v, str) and v.startswith("${runtime.") and v.endswith("}"):
+                key = v[len("${runtime."):-1]
+                merged_config[k] = self.runtime.get(key)
 
         # Instantiate skill with merged config
         skill_instance = skill_class(merged_config)

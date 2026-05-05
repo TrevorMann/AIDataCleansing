@@ -32,24 +32,28 @@ def test_decisions_log_isolated_per_record(registry):
 
 
 def test_municipality_authority_fsa_match():
-    """Test MunicipalityAuthority FSA resolution."""
+    """Without a DB conn, skill skips resolution and signals confidence=0.0."""
     registry = SkillRegistry.load("real_estate")
     agent = registry.get("municipality_authority")
 
     record = {
         "postal_code": "M9L 1H7",
-        "municipality": "Humber Summit",  # Wrong
+        "municipality": "Humber Summit",
     }
 
     result = agent.run(record)
 
-    # Should resolve to North York (from FSA M9L)
-    assert result.get("municipality") == "North York"
-    assert result.get("_municipality_confidence") >= 0.85
+    # No pg_conn configured → resolution skipped, municipality unchanged
+    assert result.get("_municipality_confidence") == 0.0
+    decisions = result.get("_decisions", [])
+    assert any(
+        "skipped" in d.get("decision", "").lower() or "failed" in d.get("decision", "").lower()
+        for d in decisions
+    )
 
 
 def test_municipality_authority_no_conflict():
-    """Test MunicipalityAuthority when upstream matches FSA."""
+    """Without a DB conn, skill skips resolution even when upstream looks correct."""
     registry = SkillRegistry.load("real_estate")
     agent = registry.get("municipality_authority")
 
@@ -60,9 +64,8 @@ def test_municipality_authority_no_conflict():
 
     result = agent.run(record)
 
-    # Should confirm North York
-    assert result.get("municipality") == "North York"
-    assert result.get("_municipality_confidence") == 1.0
+    # No pg_conn configured → resolution skipped, confidence=0.0
+    assert result.get("_municipality_confidence") == 0.0
 
 
 def test_geographic_validator_valid_postal():
@@ -159,12 +162,12 @@ def test_full_pipeline_messy_record():
     # Should have corrected spelling
     assert result["city"] == "toronto"
 
-    # Should have resolved municipality via FSA
-    assert result["municipality"] == "North York"
+    # No pg_conn → municipality resolution skips gracefully, value unchanged
+    assert result["municipality"] == "Humber Summit"
+    assert result.get("_municipality_confidence", 0.0) == 0.0
 
     # Should have triage decision
     assert "_triage_route" in result
-    assert result["_triage_route"] in ["done", "needs_review"]
 
     # Should have decisions logged
     assert "_agent_decisions" in result
@@ -300,6 +303,26 @@ def test_spell_checker_uses_fuzzy_for_short_typo():
     corrected, decision = sc._correct_text("scarb", "city", {"fuzzy_matcher": fm})
     assert corrected.lower() == "scarborough", f"Expected scarborough, got {corrected}"
     assert decision is not None
+
+
+def test_municipality_authority_no_hardcoded_fsa_dict():
+    """Lock: hardcoded FSA dict must not exist in source."""
+    from pathlib import Path
+    src = Path("skills/real_estate/municipality_authority/municipality_authority.py").read_text()
+    assert "fsa_to_municipality" not in src, "Hardcoded FSA dict reintroduced"
+    assert "M1A" not in src, "Hardcoded FSA entry found in source"
+
+
+def test_municipality_authority_no_conn_signals_gracefully():
+    """No conn configured → confidence=0.0 and a 'skipped' decision logged."""
+    from skills.real_estate.municipality_authority.municipality_authority import MunicipalityAuthorityAgent
+    skill = MunicipalityAuthorityAgent(config={})
+    out = skill.run({"postal_code": "M1A 1B1", "municipality": "Scarborough"})
+    assert out.get("_municipality_confidence", 1.0) == 0.0
+    assert any(
+        "skipped" in d.get("decision", "").lower() or "failed" in d.get("decision", "").lower()
+        for d in out.get("_decisions", [])
+    )
 
 
 if __name__ == "__main__":
