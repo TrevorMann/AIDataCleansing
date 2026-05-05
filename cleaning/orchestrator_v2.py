@@ -9,6 +9,26 @@ from skills.registry import SkillRegistry
 from skills.agent import BaseAgent
 
 
+class BatchBudget:
+    """Per-batch query budget for expensive operations (Tavily, LLM calls)."""
+
+    def __init__(self, max_queries: int = 100):
+        self.max_queries = max_queries
+        self.remaining = max_queries
+        self.spent = 0
+
+    def take(self, n: int = 1) -> bool:
+        """Take n queries from budget. Returns False if exhausted."""
+        if self.remaining < n:
+            return False
+        self.remaining -= n
+        self.spent += n
+        return True
+
+    def summary(self) -> str:
+        return f"Budget: {self.spent}/{self.max_queries} used, {self.remaining} remaining"
+
+
 @dataclass
 class CleaningRunReport:
     """Simple report of cleaning run results."""
