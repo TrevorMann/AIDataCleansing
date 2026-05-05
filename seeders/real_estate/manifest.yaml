@@ -27,3 +27,11 @@ seeders:
     license: "internal"
     config:
       seed_csv: "data/seeds/real_estate/spell_corrections.csv"
+
+  - name: query_packs
+    class: seeders.real_estate.query_packs.QueryPackSeeder
+    enabled: true
+    refresh_cadence: as_needed
+    license: "internal"
+    config:
+      packs_yaml: "data/seeds/real_estate/query_packs.yaml"

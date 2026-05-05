@@ -1,0 +1,25 @@
+domain: real_estate
+gap_types:
+  postal_unresolved:
+    seed_queries:
+      - "site:canadapost.ca postal code {postal_code}"
+      - "{postal_code} canada postal code municipality"
+      - "site:wikipedia.org {postal_code} FSA"
+
+  municipality_ambiguous:
+    seed_queries:
+      - "{postal_code} municipality {state_province}"
+      - "site:openstreetmap.org {address} {city}"
+      - "{city} {state_province} municipality boundary"
+
+  unknown_country:
+    seed_queries:
+      - "{address} {city} country code"
+      - "{city} {state_province} country"
+
+trusted_sources:
+  - canadapost.ca
+  - wikipedia.org
+  - openstreetmap.org
+  - statcan.gc.ca
+  - mpac.ca

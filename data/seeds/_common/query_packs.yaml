@@ -1,0 +1,13 @@
+domain: _common
+gap_types:
+  unknown_phone_format:
+    seed_queries:
+      - "{phone} country code area"
+
+  unknown_email_domain:
+    seed_queries:
+      - "{email_domain} company organization"
+
+trusted_sources:
+  - wikipedia.org
+  - opencorporates.com
