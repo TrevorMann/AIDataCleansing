@@ -150,12 +150,14 @@ class OrchestrationTeam:
 def run_cleaning_workflow_v2(
     records: list,
     verbose: bool = False,
+    domain: str = "real_estate",
 ) -> CleaningRunReport:
     """Cleaning workflow using agent team + skill registry.
 
     Args:
         records: List of records to process
         verbose: Verbose logging
+        domain: Domain to load skills for (real_estate, sports_ticketing, ...)
 
     Returns:
         CleaningRunReport with results and metrics
@@ -165,7 +167,7 @@ def run_cleaning_workflow_v2(
     try:
         # Load skill registry once at startup
         t = time.time()
-        registry = SkillRegistry.load("real_estate")
+        registry = SkillRegistry.load(domain)
         timing["skill_registry_load"] = time.time() - t
 
         if verbose:

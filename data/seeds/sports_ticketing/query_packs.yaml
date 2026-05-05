@@ -1,0 +1,17 @@
+domain: sports_ticketing
+gap_types:
+  unknown_team:
+    seed_queries:
+      - "site:wikipedia.org {team_name} NHL team"
+      - "{team_name} hockey team city"
+
+  unknown_venue:
+    seed_queries:
+      - "{venue_name} arena city capacity"
+      - "site:wikipedia.org {venue_name} arena"
+
+trusted_sources:
+  - wikipedia.org
+  - nhl.com
+  - nba.com
+  - ticketmaster.ca

@@ -1,0 +1,23 @@
+domain: sports_ticketing
+version: 0.1
+
+config:
+  fuzzy_match_threshold: 0.85
+
+skills:
+  event_normalizer:
+    class: skills.sports_ticketing.event_normalizer.event_normalizer.EventNormalizer
+    tools: []
+    config:
+      pg_conn: "${runtime.pg_conn}"
+    cost: low
+    latency_estimate_ms: 50
+    depends_on: []
+
+  ticket_product_categorizer:
+    class: skills.sports_ticketing.ticket_product_categorizer.ticket_product_categorizer.TicketProductCategorizer
+    tools: []
+    config: {}
+    cost: low
+    latency_estimate_ms: 20
+    depends_on: []
