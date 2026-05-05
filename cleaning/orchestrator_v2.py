@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 
 
 class OrchestrationTeam:
-    """Agent team for cleaning pipeline."""
+    """Multi-phase cleaning pipeline: deterministic → triage → AI plan → enrichment → re-triage."""
 
     def __init__(self, registry: SkillRegistry, batch_budget: Optional["BatchBudget"] = None):
         """Initialize agent team with skills from registry.
@@ -58,77 +58,89 @@ class OrchestrationTeam:
         """
         self.registry = registry
         self.batch_budget = batch_budget
+        self.planner = registry.get("skill_planner")
+        self.triage_skill = registry.get("data_quality_triage")
 
-        # Create specialized agents
-        fuzzy_skill = registry.get("fuzzy_matcher")
-        tools = {"fuzzy_matcher": fuzzy_skill} if fuzzy_skill else {}
-
-        self.address_cleaner = BaseAgent(
-            name="AddressCleaningAgent",
-            skills=["spell_checker", "address_standardizer", "fuzzy_matcher"],
-            registry=registry,
-            tools=tools,
-        )
-
-        self.geographic_validator = BaseAgent(
-            name="GeographicAlignmentAgent",
-            skills=["municipality_authority", "geographic_validator"],
-            registry=registry,
-        )
-
-        self.quality_triage = BaseAgent(
-            name="QualityTriageAgent",
-            skills=["data_quality_triage"],
-            registry=registry,
-        )
-
-        # Web search enricher (optional — only if skill is registered)
-        self.web_enricher_agent = None
-        if registry.get("web_search_enricher"):
-            self.web_enricher_agent = BaseAgent(
-                name="WebSearchEnricherAgent",
-                skills=["web_search_enricher"],
-                registry=registry,
-                tools={"batch_budget": self.batch_budget} if self.batch_budget else {},
-            )
+    def _collect_decisions(self, record: dict, log: list):
+        if "_decisions" in record:
+            log.extend(record["_decisions"])
+            del record["_decisions"]
 
     def process_record(self, record: Dict[str, Any]) -> Dict[str, Any]:
-        """Process record through agent team pipeline.
+        """Multi-phase pipeline.
 
-        Args:
-            record: Raw record to process
-
-        Returns:
-            Processed record with decisions log
+        Phase 1: Deterministic skills (cost=low), always run.
+        Phase 2: Initial triage — route early exits.
+        Phase 3: AI Planner selects medium/high-cost skills for ambiguous records.
+        Phase 4: Run planned skills with budget enforcement.
+        Phase 5: Re-triage with enriched record.
         """
         decisions_log = []
+        fuzzy_skill = self.registry.get("fuzzy_matcher")
+        base_tools = {"fuzzy_matcher": fuzzy_skill} if fuzzy_skill else {}
 
-        # Stage 1: Address Cleaning (spelling, standardization, fuzzy matching)
-        record = self.address_cleaner.execute(record)
-        if "_decisions" in record:
-            decisions_log.extend(record["_decisions"])
-            del record["_decisions"]
+        # Phase 1: Deterministic skills (cost=low, no DB required)
+        for skill_name in self.registry.skills_by_cost("low"):
+            skill = self.registry.get(skill_name)
+            if skill:
+                record = skill.run(record, base_tools)
+                self._collect_decisions(record, decisions_log)
 
-        # Stage 2: Geographic Validation (municipality, boundary, coherence)
-        record = self.geographic_validator.execute(record)
-        if "_decisions" in record:
-            decisions_log.extend(record["_decisions"])
-            del record["_decisions"]
+        # Phase 2: Initial triage
+        if self.triage_skill:
+            record = self.triage_skill.run(record)
+            self._collect_decisions(record, decisions_log)
 
-        # Stage 3: Quality Triage (done / review / unsalvageable)
-        record = self.quality_triage.execute(record)
-        if "_decisions" in record:
-            decisions_log.extend(record["_decisions"])
-            del record["_decisions"]
+        route = record.get("_triage_route")
+        if route in ("done", "unsalvageable"):
+            if decisions_log:
+                record["_agent_decisions"] = decisions_log
+            return record
 
-        # Stage 4: Web search enrichment — only for needs_review records
-        if self.web_enricher_agent and record.get("_triage_route") == "needs_review":
-            record = self.web_enricher_agent.execute(record)
-            if "_decisions" in record:
-                decisions_log.extend(record["_decisions"])
-                del record["_decisions"]
+        # Phase 3: AI Planner (optional — only if registered and record is ambiguous)
+        planned_skills = []
+        if self.planner:
+            record = self.planner.run(record, tools={"registry": self.registry})
+            self._collect_decisions(record, decisions_log)
+            planned_skills = record.get("_planned_skills", [])
 
-        # Attach decisions log for audit trail
+        if not planned_skills:
+            # Fallback: run all medium-cost skills in dep order
+            planned_skills = self.registry.skills_by_cost("medium")
+
+        # Phase 4: Run planned skills (skip cost=low already done, skip triage/planner)
+        skip = set(self.registry.skills_by_cost("low")) | {"data_quality_triage", "skill_planner"}
+        for skill_name in planned_skills:
+            if skill_name in skip:
+                continue
+            skill = self.registry.get(skill_name)
+            meta = self.registry.get_metadata(skill_name) or {}
+            if not skill:
+                continue
+
+            # Budget enforcement for high-cost skills
+            if meta.get("cost") == "high" and self.batch_budget:
+                if not self.batch_budget.take():
+                    decisions_log.append({
+                        "skill": "OrchestrationTeam",
+                        "decision": f"Skipped {skill_name} — batch budget exhausted",
+                        "reason": self.batch_budget.summary(),
+                        "confidence": 0.0,
+                    })
+                    continue
+
+            tools = dict(base_tools)
+            if self.batch_budget:
+                tools["batch_budget"] = self.batch_budget
+
+            record = skill.run(record, tools)
+            self._collect_decisions(record, decisions_log)
+
+        # Phase 5: Re-triage with enriched evidence
+        if self.triage_skill:
+            record = self.triage_skill.run(record)
+            self._collect_decisions(record, decisions_log)
+
         if decisions_log:
             record["_agent_decisions"] = decisions_log
 

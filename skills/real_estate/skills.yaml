@@ -92,6 +92,20 @@ skills:
     latency_estimate_ms: 1500
     depends_on: [address_standardizer]
 
+  skill_planner:
+    class: skills._common.skill_planner.skill_planner.SkillPlanner
+    skill_doc: skills/_common/skill_planner/skill.md
+    tools:
+      - registry
+    config:
+      tier: "fast"
+      plan_cache_ttl_hours: 24
+      pg_conn: "${runtime.pg_conn}"
+      llm_client: "${runtime.llm_client}"
+    cost: high
+    latency_estimate_ms: 2000
+    depends_on: [data_quality_triage]
+
   web_search_enricher:
     class: skills._common.web_search_enricher.web_search_enricher.WebSearchEnricher
     skill_doc: skills/_common/web_search_enricher/skill.md

@@ -146,5 +146,57 @@ class SkillRegistry:
             return meta.get("skill_doc")
         return None
 
+    def validate_dependencies(self):
+        """Detect missing deps and circular dependencies. Raises ValueError."""
+        for name in self.skills:
+            deps = self.metadata[name].get("depends_on", [])
+            for dep in deps:
+                if dep not in self.skills:
+                    raise ValueError(f"Skill '{name}' depends on unknown skill: '{dep}'")
+        self._detect_cycles()
+
+    def _detect_cycles(self):
+        WHITE, GRAY, BLACK = 0, 1, 2
+        color = {n: WHITE for n in self.skills}
+
+        def dfs(node):
+            color[node] = GRAY
+            for dep in self.metadata[node].get("depends_on", []):
+                if dep not in color:
+                    continue
+                if color[dep] == GRAY:
+                    raise ValueError(f"Circular dependency detected: {node} → {dep}")
+                if color[dep] == WHITE:
+                    dfs(dep)
+            color[node] = BLACK
+
+        for node in list(self.skills.keys()):
+            if color[node] == WHITE:
+                dfs(node)
+
+    def topological_sort(self, skill_names: list) -> list:
+        """Return skill_names in dependency order. Drops unknown skill names."""
+        valid = [s for s in skill_names if s in self.skills]
+        visited = set()
+        order = []
+
+        def visit(n):
+            if n in visited:
+                return
+            visited.add(n)
+            for dep in self.metadata[n].get("depends_on", []):
+                if dep in set(valid):
+                    visit(dep)
+            order.append(n)
+
+        for s in valid:
+            visit(s)
+        return order
+
+    def skills_by_cost(self, cost: str) -> list:
+        """All skills with given cost level, in dependency order."""
+        matches = [n for n, m in self.metadata.items() if m.get("cost") == cost]
+        return self.topological_sort(matches)
+
     def __repr__(self):
         return f"SkillRegistry({len(self.skills)} skills: {', '.join(self.list_skills())})"
