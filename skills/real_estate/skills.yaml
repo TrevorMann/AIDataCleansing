@@ -77,6 +77,21 @@ skills:
     latency_estimate_ms: 500
     depends_on: [municipality_authority]
 
+  nominatim_geocoder:
+    class: skills.real_estate.nominatim_geocoder.nominatim_geocoder.NominatimGeocoderSkill
+    skill_doc: skills/real_estate/nominatim_geocoder/skill.md
+    tools:
+      - nominatim_api
+      - geocode_cache
+    config:
+      rate_limit: 1
+      countrycodes: "ca"
+      cache_ttl_days: 30
+      pg_conn: "${runtime.pg_conn}"
+    cost: high
+    latency_estimate_ms: 1500
+    depends_on: [address_standardizer]
+
   data_quality_triage:
     class: skills.real_estate.data_quality_triage.data_quality_triage.DataQualityTriageAgent
     skill_doc: skills/real_estate/data_quality_triage/skill.md
