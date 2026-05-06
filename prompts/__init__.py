@@ -1,9 +1,19 @@
 """
 System prompt assembler.
 
-build_system_prompt(sub, schema, domain) always returns:
-    BASE_RULES                       ← generic data engineer, always loaded
-    + domains/<domain>.get_prompt(sub)  ← domain+sub specific, only when matched
+build_system_prompt(sub, schema, domain) returns a structured prompt:
+
+    <general_rules>          ← BASE_RULES, always loaded
+      <schema>...</schema>   ← DB schema injected here
+      GENERAL RULES...
+    </general_rules>
+
+    <domain_rules domain="X" sub="Y">   ← only when domain match found
+      ...domain/sub-specific rules...
+    </domain_rules>
+
+XML tags help the model distinguish which rules are universal vs. domain-specific,
+and clearly bound where each layer starts and ends.
 
 Layers loaded:
   base     = prompts/base.py               (always)
@@ -45,7 +55,7 @@ def build_system_prompt(sub: str | None = None, schema: str = "", domain: str | 
 
     Returns
     -------
-    str — base + domain/sub prompt, concatenated.
+    str — structured prompt with XML-tagged layers.
     """
     domain = domain or get_active_domain() or ""
     schema_block = f"\nDatabase schema:\n{schema}\n" if schema else ""
@@ -54,4 +64,14 @@ def build_system_prompt(sub: str | None = None, schema: str = "", domain: str | 
     mod = _load_domain_module(domain)
     domain_prompt = mod.get_prompt(sub) if mod and hasattr(mod, "get_prompt") else ""
 
-    return base + domain_prompt
+    # Wrap base rules
+    parts = [f"<general_rules>\n{base.strip()}\n</general_rules>"]
+
+    # Wrap domain rules — tag carries domain + sub so model knows context
+    if domain_prompt.strip():
+        sub_attr = f' sub="{sub}"' if sub else ""
+        parts.append(
+            f'<domain_rules domain="{domain}"{sub_attr}>\n{domain_prompt.strip()}\n</domain_rules>'
+        )
+
+    return "\n\n".join(parts)
