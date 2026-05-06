@@ -58,9 +58,30 @@ BACKEND SELECTION
 
 import os
 import logging
+from pathlib import Path
 from anthropic import Anthropic
 
 logger = logging.getLogger(__name__)
+
+
+def _load_dotenv() -> None:
+    """Load .env from project root into os.environ (no-op if already set or file missing)."""
+    env_path = Path(__file__).parent / ".env"
+    if not env_path.exists():
+        return
+    with open(env_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            # Never overwrite values already set in the environment
+            if key not in os.environ:
+                os.environ[key] = value.strip()
+
+
+_load_dotenv()
 
 # ── Backend constants ──────────────────────────────────────────────────────────
 OPENROUTER = "openrouter"
