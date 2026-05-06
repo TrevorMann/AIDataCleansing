@@ -51,12 +51,6 @@ class HTMLReportGenerator:
             f'{lines}</pre></details>'
         )
 
-    def render_notes(self, notes: List[str], title: str) -> str:
-        if not notes:
-            return ""
-        items = "".join(f"<li>{html_lib.escape(n)}</li>" for n in notes)
-        return f'<p><strong>{title}:</strong></p><ul style="font-size:13px;">{items}</ul>'
-
     def render_criteria_results(self, criteria_results: list, judge_reasoning: str, judge_error: str | None) -> str:
         """Render per-criterion pass/fail from LLM judge."""
         if judge_error:
@@ -137,19 +131,6 @@ class HTMLReportGenerator:
             metric.get("judge_error"),
         )
 
-        compliance_notes_html = self.render_notes(metric["compliance_notes"], "Compliance (structural)")
-        clarity_notes_html = self.render_notes(metric["clarity_notes"], "Clarity (structural)")
-
-        issues_html = ""
-        if metric["issues"]:
-            issues_html = (
-                "<h4 style='color:#555;'>Structural Warnings</h4>"
-                "<ul>" + "".join(
-                    f"<li style='font-size:13px;'>{html_lib.escape(issue)}</li>"
-                    for issue in metric["issues"]
-                ) + "</ul>"
-            )
-
         trace_html = self.render_trace(result.get("trace", []))
 
         return f"""
@@ -160,9 +141,9 @@ class HTMLReportGenerator:
   </h3>
 
   <div style="margin:10px 0;">
-    {self.render_metric_card(s["accuracy"], "Accuracy (Judge)")}
-    {self.render_metric_card(s["compliance"], "Compliance")}
-    {self.render_metric_card(s["clarity"], "Clarity")}
+    {self.render_metric_card(s["correctness"], "Correctness")}
+    {self.render_metric_card(s["format"], "Format")}
+    {self.render_metric_card(s["instruction_following"], "Instruction Following")}
     {self.render_metric_card(s["overall"], "Overall")}
   </div>
 
@@ -182,9 +163,6 @@ class HTMLReportGenerator:
   <h4 style="color:#555;">Extracted Cleaned Record</h4>
   <pre style="background:#f0f8f0;padding:10px;border-radius:4px;font-size:12px;overflow-x:auto;">{extracted}</pre>
 
-  {compliance_notes_html}
-  {clarity_notes_html}
-  {issues_html}
   {trace_html}
 </div>"""
 

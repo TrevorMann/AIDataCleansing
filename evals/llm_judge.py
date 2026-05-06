@@ -26,18 +26,40 @@ You will be given:
 2. The expected behavior (what should happen)
 3. Evaluation criteria (specific checkpoints)
 4. The actual LLM response to evaluate
+5. The extracted cleaned JSON record (if parseable)
 
-Your job: judge whether the response met each criterion.
+Score THREE dimensions of prompt quality, then score each criterion:
 
-Rules for judging:
+DIMENSION DEFINITIONS:
+- correctness: Did the LLM produce the right cleaned values? Were fields fixed accurately?
+  Score 1.0 if all fixable fields were cleaned correctly.
+  Score 0.5 if some fields right, some wrong or missed.
+  Score 0.0 if output values are wrong or hallucinated.
+
+- format: Did the response include a valid structured JSON record with the expected fields?
+  Score 1.0 if clean, complete JSON was produced with no extra/missing fields.
+  Score 0.5 if JSON exists but is incomplete or malformed.
+  Score 0.0 if no JSON output at all.
+
+- instruction_following: Did the response follow the system prompt rules?
+  This means: reasoning provided when needed, uncertainty flagged when record is genuinely ambiguous,
+  values preserved when they cannot be cleaned, no hallucinated data.
+  Score 1.0 if all applicable rules were followed.
+  Score 0.5 if partially followed.
+  Score 0.0 if rules were ignored or violated.
+
+Rules:
 - Judge based on WHAT the response actually did, not whether it used specific words
-- A criterion about uncertainty only applies if the record is actually ambiguous
-- A criterion about preserving values only matters if there were values that couldn't be cleaned
-- Be strict but fair — partial credit is OK (use score between 0.0 and 1.0)
-- Focus on correctness, not style
+- Uncertainty/preservation rules only apply when the record is genuinely ambiguous
+- Be strict but fair — partial credit is OK
 
 You MUST respond with valid JSON only, in this exact structure:
 {
+  "dimensions": {
+    "correctness": 0.9,
+    "format": 1.0,
+    "instruction_following": 0.8
+  },
   "criteria_results": [
     {
       "criterion": "<exact criterion text>",
@@ -46,16 +68,13 @@ You MUST respond with valid JSON only, in this exact structure:
       "reason": "<one sentence explaining the verdict>"
     }
   ],
-  "accuracy_score": 0.85,
   "overall_verdict": "pass",
   "judge_reasoning": "<2-3 sentences summarizing overall quality>"
 }
 
 Where:
-- pass: true if criterion is met, false if not
-- score: 0.0 to 1.0 for this criterion (1.0 = fully met, 0.5 = partially, 0.0 = failed)
-- overall_verdict: "pass" (≥0.8), "partial" (0.5-0.8), or "fail" (<0.5)
-- accuracy_score: weighted average of criterion scores (0.0 to 1.0)
+- overall_verdict: "pass" (all dimensions avg ≥0.8), "partial" (≥0.5), or "fail" (<0.5)
+- criteria_results: one entry per evaluation criterion
 
 Output ONLY valid JSON. No preamble, no explanation outside the JSON."""
 
@@ -220,26 +239,28 @@ def _parse_judge_response(raw_text: str, criteria: list[str]) -> dict:
 
 def _validate_judge_data(data: dict, criteria: list[str]) -> dict:
     """Ensure required fields exist; fill defaults if missing."""
-    criteria_results = data.get("criteria_results", [])
+    # ── Dimensions ────────────────────────────────────────────────────────────
+    raw_dims = data.get("dimensions", {})
+    dimensions = {
+        "correctness":           float(raw_dims.get("correctness", 0.5)),
+        "format":                float(raw_dims.get("format", 0.5)),
+        "instruction_following": float(raw_dims.get("instruction_following", 0.5)),
+    }
+    overall_score = sum(dimensions.values()) / len(dimensions)
 
-    # If judge didn't return per-criterion results, synthesize from accuracy_score
+    # ── Per-criterion results ─────────────────────────────────────────────────
+    criteria_results = data.get("criteria_results", [])
     if not criteria_results and criteria:
-        score = float(data.get("accuracy_score", 0.5))
         criteria_results = [
-            {"criterion": c, "pass": score >= 0.5, "score": score, "reason": "Inferred from overall score"}
+            {"criterion": c, "pass": overall_score >= 0.5, "score": overall_score,
+             "reason": "Inferred from dimension scores"}
             for c in criteria
         ]
 
-    # Recompute accuracy_score from criterion scores for consistency
-    if criteria_results:
-        accuracy = sum(r.get("score", 0.5) for r in criteria_results) / len(criteria_results)
-    else:
-        accuracy = float(data.get("accuracy_score", 0.5))
-
     return {
+        "dimensions": {k: round(v, 3) for k, v in dimensions.items()},
         "criteria_results": criteria_results,
-        "accuracy_score": round(accuracy, 3),
-        "overall_verdict": data.get("overall_verdict", _verdict(accuracy)),
+        "overall_verdict": data.get("overall_verdict", _verdict(overall_score)),
         "judge_reasoning": data.get("judge_reasoning", ""),
     }
 
@@ -247,8 +268,8 @@ def _validate_judge_data(data: dict, criteria: list[str]) -> dict:
 def _fallback_result(test_id: str, reason: str) -> dict:
     """Return neutral 0.5 result when judge call fails."""
     return {
+        "dimensions": {"correctness": 0.5, "format": 0.5, "instruction_following": 0.5},
         "criteria_results": [],
-        "accuracy_score": 0.5,
         "overall_verdict": "partial",
         "judge_reasoning": f"Judge unavailable: {reason}",
         "judge_error": reason,
