@@ -86,18 +86,35 @@ def run_evaluation(dataset_path: Path, output_json: bool, output_html: bool) -> 
     results = evaluator.evaluate_dataset(str(dataset_path))
     logger.info(f"✅ Completed {len(results)} evaluations\n")
 
+    # ── Phase 1.5: LLM Judge ──────────────────────────────────────────────────
+    logger.info("=" * 70)
+    logger.info("PHASE 1.5: LLM JUDGE  (semantic per-criterion scoring)")
+    logger.info("=" * 70)
+
+    from evals.llm_judge import LLMJudge
+    collector = MetricsCollector()
+    extracted_jsons = [
+        collector.extract_json_from_response(r["llm_response"]) for r in results
+    ]
+    judge = LLMJudge()
+    judge_results = judge.judge_all(results, extracted_jsons)
+    logger.info("")
+
     # ── Phase 2: Metrics ───────────────────────────────────────────────────────
     logger.info("=" * 70)
     logger.info("PHASE 2: METRICS  (score responses)")
     logger.info("=" * 70)
 
-    collector = MetricsCollector()
-    metrics = collector.evaluate_all(results)
+    metrics = collector.evaluate_all(results, judge_results=judge_results)
     summary = collector.summary_stats(metrics)
 
     logger.info(f"✅ Scored {len(metrics)} results")
     for cat, stats in summary.items():
-        logger.info(f"   {cat.title():12s}: {stats['mean']:.1%}")
+        if cat == "verdicts":
+            v = stats
+            logger.info(f"   {'Verdicts':12s}: pass={v['pass']} partial={v['partial']} fail={v['fail']}")
+        else:
+            logger.info(f"   {cat.title():12s}: {stats['mean']:.1%}")
     logger.info("")
 
     # ── Phase 3: Output ────────────────────────────────────────────────────────

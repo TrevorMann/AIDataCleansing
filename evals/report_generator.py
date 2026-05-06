@@ -57,6 +57,57 @@ class HTMLReportGenerator:
         items = "".join(f"<li>{html_lib.escape(n)}</li>" for n in notes)
         return f'<p><strong>{title}:</strong></p><ul style="font-size:13px;">{items}</ul>'
 
+    def render_criteria_results(self, criteria_results: list, judge_reasoning: str, judge_error: str | None) -> str:
+        """Render per-criterion pass/fail from LLM judge."""
+        if judge_error:
+            return (
+                f'<div style="background:#fff3cd;padding:10px;border-radius:4px;'
+                f'border-left:4px solid #ffc107;font-size:13px;">'
+                f'⚠️ Judge error: {html_lib.escape(judge_error)}</div>'
+            )
+
+        if not criteria_results:
+            return ""
+
+        rows = ""
+        for cr in criteria_results:
+            passed = cr.get("pass", False)
+            score = cr.get("score", 0.0)
+            criterion = html_lib.escape(str(cr.get("criterion", "")))
+            reason = html_lib.escape(str(cr.get("reason", "")))
+            icon = "✅" if passed else "❌"
+            pct = int(score * 100)
+            color = self._score_color(score)
+            rows += (
+                f'<tr>'
+                f'<td style="width:30px;text-align:center;">{icon}</td>'
+                f'<td style="font-size:12px;">{criterion}</td>'
+                f'<td style="width:50px;text-align:center;font-weight:bold;color:{color};">{pct}%</td>'
+                f'<td style="font-size:12px;color:#666;">{reason}</td>'
+                f'</tr>'
+            )
+
+        reasoning_html = ""
+        if judge_reasoning:
+            reasoning_html = (
+                f'<p style="font-size:12px;color:#555;font-style:italic;margin:8px 0 0;">'
+                f'Judge: {html_lib.escape(judge_reasoning)}</p>'
+            )
+
+        return (
+            f'<h4 style="color:#555;">Judge Verdict — Per Criterion</h4>'
+            f'<table style="width:100%;border-collapse:collapse;margin:8px 0;">'
+            f'<tr style="background:#f0f0f0;">'
+            f'<th style="padding:6px;font-size:11px;width:30px;"></th>'
+            f'<th style="padding:6px;font-size:11px;text-align:left;">Criterion</th>'
+            f'<th style="padding:6px;font-size:11px;width:50px;">Score</th>'
+            f'<th style="padding:6px;font-size:11px;text-align:left;">Reason</th>'
+            f'</tr>'
+            f'{rows}'
+            f'</table>'
+            f'{reasoning_html}'
+        )
+
     def render_test_case(self, result: dict, metric: dict) -> str:
         test_id = html_lib.escape(result["test_case_id"])
         description = html_lib.escape(result["description"])
@@ -73,27 +124,43 @@ class HTMLReportGenerator:
             else "❌ Could not extract JSON from response"
         )
 
-        criteria_html = ""
-        if result.get("evaluation_criteria"):
-            items = "".join(
-                f"<li>{html_lib.escape(c)}</li>"
-                for c in result["evaluation_criteria"]
-            )
-            criteria_html = f'<ul style="font-size:13px;">{items}</ul>'
+        verdict = metric.get("overall_verdict", "partial")
+        verdict_badge = {
+            "pass":    '<span style="background:#27ae60;color:#fff;padding:2px 8px;border-radius:10px;font-size:11px;">PASS</span>',
+            "partial": '<span style="background:#e67e22;color:#fff;padding:2px 8px;border-radius:10px;font-size:11px;">PARTIAL</span>',
+            "fail":    '<span style="background:#c0392b;color:#fff;padding:2px 8px;border-radius:10px;font-size:11px;">FAIL</span>',
+        }.get(verdict, "")
 
-        compliance_notes_html = self.render_notes(metric["compliance_notes"], "Compliance")
-        clarity_notes_html = self.render_notes(metric["clarity_notes"], "Clarity")
+        criteria_judge_html = self.render_criteria_results(
+            metric.get("criteria_results", []),
+            metric.get("judge_reasoning", ""),
+            metric.get("judge_error"),
+        )
+
+        compliance_notes_html = self.render_notes(metric["compliance_notes"], "Compliance (structural)")
+        clarity_notes_html = self.render_notes(metric["clarity_notes"], "Clarity (structural)")
+
+        issues_html = ""
+        if metric["issues"]:
+            issues_html = (
+                "<h4 style='color:#555;'>Structural Warnings</h4>"
+                "<ul>" + "".join(
+                    f"<li style='font-size:13px;'>{html_lib.escape(issue)}</li>"
+                    for issue in metric["issues"]
+                ) + "</ul>"
+            )
+
         trace_html = self.render_trace(result.get("trace", []))
 
         return f"""
 <div style="border:1px solid #ddd;margin:24px 0;padding:18px;border-radius:6px;background:#fff;
             border-left:5px solid {overall_color};">
-  <h3 style="margin:0 0 6px 0;color:#333;">{test_id}
+  <h3 style="margin:0 0 6px 0;color:#333;">{test_id} {verdict_badge}
     <span style="font-size:13px;font-weight:normal;color:#777;margin-left:10px;">{description}</span>
   </h3>
 
   <div style="margin:10px 0;">
-    {self.render_metric_card(s["accuracy"], "Accuracy")}
+    {self.render_metric_card(s["accuracy"], "Accuracy (Judge)")}
     {self.render_metric_card(s["compliance"], "Compliance")}
     {self.render_metric_card(s["clarity"], "Clarity")}
     {self.render_metric_card(s["overall"], "Overall")}
@@ -102,28 +169,33 @@ class HTMLReportGenerator:
   <h4 style="color:#555;">Expected Behavior</h4>
   <p style="font-size:13px;">{expected}</p>
 
-  {f'<h4 style="color:#555;">Evaluation Criteria</h4>{criteria_html}' if criteria_html else ''}
+  {criteria_judge_html}
 
   <h4 style="color:#555;">Input Record</h4>
   <pre style="background:#f9f9f9;padding:10px;border-radius:4px;font-size:12px;overflow-x:auto;">{input_data}</pre>
 
-  <h4 style="color:#555;">LLM Response</h4>
-  <pre style="background:#f9f9f9;padding:10px;border-radius:4px;font-size:12px;overflow-x:auto;white-space:pre-wrap;">{llm_response}</pre>
+  <details style="margin:10px 0;">
+    <summary style="cursor:pointer;font-weight:bold;color:#555;">▶ LLM Response</summary>
+    <pre style="background:#f9f9f9;padding:10px;border-radius:4px;font-size:12px;overflow-x:auto;white-space:pre-wrap;">{llm_response}</pre>
+  </details>
 
   <h4 style="color:#555;">Extracted Cleaned Record</h4>
   <pre style="background:#f0f8f0;padding:10px;border-radius:4px;font-size:12px;overflow-x:auto;">{extracted}</pre>
 
   {compliance_notes_html}
   {clarity_notes_html}
+  {issues_html}
   {trace_html}
 </div>"""
 
     def generate_html(self) -> str:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        # Summary cards
+        # Summary cards (skip "verdicts")
         summary_cards = ""
         for cat, stats in self.summary.items():
+            if cat == "verdicts":
+                continue
             summary_cards += self.render_metric_card(stats["mean"], cat.title())
 
         # Test cases
@@ -131,9 +203,11 @@ class HTMLReportGenerator:
         for result, metric in zip(self.results, self.metrics):
             cases_html += self.render_test_case(result, metric)
 
-        # Summary table
+        # Summary table (skip "verdicts" — different shape)
         rows = ""
         for cat, stats in self.summary.items():
+            if cat == "verdicts":
+                continue
             rows += (
                 f'<tr>'
                 f'<td>{cat.title()}</td>'
@@ -141,6 +215,19 @@ class HTMLReportGenerator:
                 f'<td>{int(stats["min"]*100)}%</td>'
                 f'<td>{int(stats["max"]*100)}%</td>'
                 f'</tr>'
+            )
+
+        # Verdict breakdown row
+        v = self.summary.get("verdicts", {})
+        if v:
+            rows += (
+                f'<tr style="background:#f9f9f9;">'
+                f'<td>Verdicts</td>'
+                f'<td colspan="3" style="font-size:12px;">'
+                f'✅ Pass: {v.get("pass", 0)} &nbsp;|&nbsp; '
+                f'🟠 Partial: {v.get("partial", 0)} &nbsp;|&nbsp; '
+                f'❌ Fail: {v.get("fail", 0)}'
+                f'</td></tr>'
             )
 
         return f"""<!DOCTYPE html>
