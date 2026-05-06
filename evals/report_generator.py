@@ -260,4 +260,4 @@ class HTMLReportGenerator:
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(self.generate_html())
-        print(f"✅ HTML report saved to {output_path}")
+        print(f"HTML report saved to {output_path}")

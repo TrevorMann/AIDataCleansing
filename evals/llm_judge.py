@@ -181,8 +181,10 @@ Judge this response against each criterion and return your assessment as JSON.""
                 "cache_read": getattr(response.usage, "cache_read_input_tokens", 0),
             }
             judge_result["judge_error"] = None
+            dims = judge_result.get("dimensions", {})
+            overall = sum(dims.values()) / len(dims) if dims else 0.5
             logger.debug(
-                f"[judge] {test_id}: accuracy={judge_result['accuracy_score']:.2f} "
+                f"[judge] {test_id}: overall={overall:.2f} "
                 f"verdict={judge_result['overall_verdict']}"
             )
             return judge_result
