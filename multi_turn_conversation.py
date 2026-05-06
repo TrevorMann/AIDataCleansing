@@ -19,6 +19,8 @@ from guardrails import (
     check_usa_state, check_nl_phone_format,
 )
 from prompts import build_system_prompt
+from skill_router import detect_skill, load_skill
+from llm_client_factory import create_client, build_system_param, build_message_kwargs, log_usage, OPENROUTER, ANTHROPIC
 
 # Read .env file without requiring python-dotenv
 def load_env():
@@ -171,10 +173,17 @@ def web_search(query: str, max_results: int = 5) -> str:
         return f"Web search failed: {e}. Query: {query}"
 
 
-client = Anthropic(
-    base_url="https://openrouter.ai/api",
-    api_key=os.getenv("OPENROUTER_API_KEY"),
-)
+# ── LLM client — PATH A (OpenRouter) or PATH B (Anthropic) ───────────────────
+# Set LLM_BACKEND=openrouter|anthropic in .env, or let it auto-detect from keys.
+# See llm_client_factory.py for full documentation on each path.
+_CLIENT, _BACKEND, _MODEL = create_client()
+
+from prompts.domain_registry import get_active_domain, get_domain_config
+_ACTIVE_DOMAIN = get_active_domain() or "real_estate"
+_DOMAIN_CONFIG = get_domain_config(_ACTIVE_DOMAIN)
+print(f"[LLM] backend={_BACKEND}  model={_MODEL}")
+print(f"[domain] active={_ACTIVE_DOMAIN}  label={_DOMAIN_CONFIG.get('label', '')}")
+print(f"[domain] sub_categories={_DOMAIN_CONFIG.get('sub_categories', [])}")
 
 SYSTEM_PROMPT = build_system_prompt('CA', schema=DB_SCHEMA)
 
@@ -571,29 +580,50 @@ class DataCleaningConversation:
         """
         Send a message with hybrid approach:
         1. Pre-process locally where possible
-        2. Let Claude make decisions
-        3. Claude can call tools if needed
-        4. Handle tool calls and loop until done
+        2. Detect active skill and inject its instructions into the system prompt
+        3. Let the model make decisions (tool calls loop until done)
+
+        PATH A (OpenRouter): system prompt is a plain string.
+        PATH B (Anthropic):  system prompt is a list of typed blocks with cache_control.
+
+        Logs usage metrics for cost tracking and cache hit analysis.
         """
         # Step 1: Pre-process the input
         preprocessed = self.preprocess_data(user_input)
 
-        # Step 2: Add user message
+        # Step 2: Skill detection — inject matching SKILL.md into system prompt
+        skill_name = detect_skill(preprocessed)
+        if skill_name:
+            print(f"  [skill] activated: {skill_name}")
+            skill_content = load_skill(skill_name)
+        else:
+            skill_content = ""
+
+        # Step 3: Build backend-specific system param
+        # PATH A (openrouter): plain string  |  PATH B (anthropic): list of blocks
+        system_param = build_system_param(_BACKEND, self.system_prompt, skill_content)
+
+        # Step 4: Add user message
         self.messages.append({
             "role": "user",
             "content": preprocessed
         })
 
-        # Step 3: Loop until Claude stops calling tools
+        # Step 5: Build backend-specific message kwargs (budget_tokens for Anthropic, etc)
+        message_kwargs = build_message_kwargs(_BACKEND)
+
+        # Step 6: Loop until model stops calling tools
         while True:
-            response = client.messages.create(
-               # model="anthropic/claude-haiku-4.5",
-                model="openai/gpt-oss-20b:free",
+            response = _CLIENT.messages.create(
+                model=_MODEL,
                 max_tokens=2048,
-                system=self.system_prompt,
+                system=system_param,
                 messages=self.messages,
-                tools=self.define_tools()
+                tools=self.define_tools(),
+                **message_kwargs
             )
+            # Log usage for cost tracking
+            log_usage(_BACKEND, response.usage)
 
 
             
@@ -841,21 +871,27 @@ class DataCleaningConversation:
             tool_round = 0
             max_rounds = 20
 
-            # Focused system prompt: just the research rules for this country
-            from prompts import build_system_prompt
-            research_system = build_system_prompt(country_scope or 'CA', schema='')
+            # Focused system prompt: base + domain/country rules only (no DB schema = shorter prompt)
+            research_system = build_system_prompt(sub=country_scope or 'CA', schema='')
+
+            # PATH A (openrouter): system is plain string, no caching
+            # PATH B (anthropic):  system is list of blocks; base prompt cached via cache_control
+            research_system_param = build_system_param(_BACKEND, research_system)
+
+            # Build backend-specific message kwargs
+            research_message_kwargs = build_message_kwargs(_BACKEND)
 
             while tool_round < max_rounds:
                 tool_round += 1
-                response = client.messages.create(
-                    #model="anthropic/claude-haiku-4.5",
-                    model="openai/gpt-oss-20b:free",
+                response = _CLIENT.messages.create(
+                    model=_MODEL,
                     max_tokens=2048,
-                    system=research_system,
+                    system=research_system_param,
                     messages=research_messages,
                     tools=self.define_tools(),
-                    cache_control="ephemeral"
+                    **research_message_kwargs
                 )
+                log_usage(_BACKEND, response.usage)
                 tool_calls = [b for b in response.content if hasattr(b, 'type') and b.type == "tool_use"]
 
                 print(f"  Round {tool_round}: {len(tool_calls)} tool calls, stop={response.stop_reason}")
@@ -879,14 +915,15 @@ class DataCleaningConversation:
 
             if claude_response == "No response":
                 print("  ⚠️  Round cap hit — forcing final output...")
-                final = client.messages.create(
-                    #model="anthropic/claude-haiku-4.5",
-                    model="openai/gpt-oss-20b:free",
+                final = _CLIENT.messages.create(
+                    model=_MODEL,
                     max_tokens=2048,
-                    system=research_system,
+                    system=research_system_param,
                     messages=research_messages + [{"role": "user", "content":
-                        "Research complete. Now return ONLY the table: | ID | Postal Code | Municipality | Validation Notes |"}]
+                        "Research complete. Now return ONLY the table: | ID | Postal Code | Municipality | Validation Notes |"}],
+                    **research_message_kwargs
                 )
+                log_usage(_BACKEND, final.usage)
                 claude_response = next(
                     (b.text for b in final.content if hasattr(b, 'text')), "No response"
                 )
