@@ -13,7 +13,7 @@ Required env vars:
   LLM_BACKEND=openrouter          # or omit — auto-detected if key is present
 
 Optional:
-  OPENROUTER_MODEL=anthropic/claude-haiku-4-5   # default if unset
+  OPENROUTER_MODEL=anthropic/claude-haiku-4-5   # default: openai/gpt-oss-20b:free
 
 Usage in messages.create():
   system = <plain string>         # no cache_control blocks
@@ -91,8 +91,8 @@ _OPENROUTER_BASE_URL = "https://openrouter.ai/api"
 _REQUEST_TIMEOUT = 30  # seconds
 
 _DEFAULT_MODELS: dict[str, str] = {
-    OPENROUTER: "anthropic/claude-haiku-4-5",
-    ANTHROPIC:  "claude-haiku-4-5-20251001",
+    OPENROUTER: "openai/gpt-oss-20b:free",   # free tier; change via OPENROUTER_MODEL
+    ANTHROPIC:  "claude-haiku-4-5-20251001",  # change via ANTHROPIC_MODEL
 }
 
 

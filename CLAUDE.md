@@ -20,6 +20,30 @@ DB_PATH=data/cleaning.db            # only used when DB_BACKEND=sqlite
 TAVILY_API_KEY=tvly-...
 ```
 
+## Model Selection
+
+Default model per backend (set in `llm_client_factory.py`):
+
+| Backend | Default | Override env var |
+|---------|---------|-----------------|
+| OpenRouter | `openai/gpt-oss-20b:free` | `OPENROUTER_MODEL` |
+| Anthropic | `claude-haiku-4-5-20251001` | `ANTHROPIC_MODEL` |
+
+To switch models without touching code, set in `.env`:
+
+```bash
+# OpenRouter — switch to Claude Haiku
+OPENROUTER_MODEL=anthropic/claude-haiku-4-5
+
+# OpenRouter — switch to Claude Sonnet
+OPENROUTER_MODEL=anthropic/claude-sonnet-4-5
+
+# Anthropic direct — switch to Sonnet
+ANTHROPIC_MODEL=claude-sonnet-4-5-20251016
+```
+
+All pipeline components (orchestrator, evals judge, multi-turn conversation) share the same factory — changing the env var switches every caller at once.
+
 ## Setup
 
 ```bash
