@@ -136,7 +136,86 @@ def init_db(db_path: str) -> None:
     # Add municipality columns to raw_data and cleaned_data
     add_columns_to_listings(conn)
 
+    # Create seeder support tables (spell corrections, query memory, plan cache)
+    create_seeder_tables(conn)
+
     conn.close()
+
+
+def create_seeder_tables(conn) -> None:
+    """Create seeder-populated tables with SQLite-compatible DDL.
+
+    Mirrors db/migrations/003–005 without Postgres-specific types
+    (SERIAL → INTEGER PRIMARY KEY, TIMESTAMPTZ → TEXT, JSONB → TEXT, NOW() → CURRENT_TIMESTAMP).
+    Safe to call multiple times — all statements use IF NOT EXISTS.
+    """
+    cur = conn.cursor()
+
+    # 003 spell_corrections
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS spell_corrections (
+            wrong      TEXT NOT NULL,
+            domain     TEXT NOT NULL,
+            right      TEXT NOT NULL,
+            source     TEXT NOT NULL DEFAULT 'manual_seed',
+            confidence REAL NOT NULL DEFAULT 1.0,
+            added_at   TEXT DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (wrong, domain)
+        )
+    """)
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_spell_corr_domain ON spell_corrections(domain)"
+    )
+
+    # 004 query_pattern_memory
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS query_pattern_memory (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            domain            TEXT NOT NULL,
+            gap_type          TEXT NOT NULL,
+            query_template    TEXT NOT NULL,
+            success_count     INTEGER NOT NULL DEFAULT 0,
+            failure_count     INTEGER NOT NULL DEFAULT 0,
+            last_used_at      TEXT,
+            sample_resolution TEXT,
+            UNIQUE (domain, gap_type, query_template)
+        )
+    """)
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_qpm_domain_gap ON query_pattern_memory(domain, gap_type)"
+    )
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS source_registry (
+            domain_key    TEXT NOT NULL,
+            url_host      TEXT NOT NULL,
+            trust_score   REAL NOT NULL DEFAULT 0.5,
+            success_count INTEGER NOT NULL DEFAULT 0,
+            failure_count INTEGER NOT NULL DEFAULT 0,
+            license_notes TEXT,
+            PRIMARY KEY (domain_key, url_host)
+        )
+    """)
+
+    # 005 plan_cache
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS plan_cache (
+            signature  TEXT PRIMARY KEY,
+            domain     TEXT NOT NULL,
+            plan       TEXT NOT NULL,
+            reasoning  TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            expires_at TEXT NOT NULL
+        )
+    """)
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_plan_cache_expires ON plan_cache(expires_at)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_plan_cache_domain ON plan_cache(domain)"
+    )
+
+    conn.commit()
 
 
 def _seed_column_metadata(cursor) -> None:

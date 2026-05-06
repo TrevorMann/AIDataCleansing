@@ -3,14 +3,7 @@
 from abc import ABC, abstractmethod
 from typing import Any, Optional
 
-
-def _table_exists(conn, table: str) -> bool:
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name=%s)",
-            (table,),
-        )
-        return cur.fetchone()[0]
+from db.upsert import table_exists as _table_exists
 
 
 class Seeder(ABC):
@@ -39,7 +32,7 @@ class Seeder(ABC):
 
     def validate_schema(self, conn):
         for tbl in self.schema_required:
-            assert _table_exists(conn, tbl), f"{tbl} missing — run migrations first"
+            assert _table_exists(conn, tbl), f"{tbl} missing — run: python scripts/domain.py init --domain {self.domain}"
 
     def run(self, conn) -> int:
         self.validate_schema(conn)

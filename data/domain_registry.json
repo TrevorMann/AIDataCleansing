@@ -1,0 +1,15 @@
+{
+  "_note": "Tracks which domains are initialized. Updated automatically by 'scripts/domain.py scaffold'. Edit directly to switch active_domain.",
+  "active_domain": "real_estate",
+  "domains": {
+    "real_estate": {
+      "initialized_at": "2026-05-05",
+      "label": "Real estate listings — addresses, postal codes, neighbourhoods",
+      "sub_category_dimension": "country",
+      "sub_categories": ["CA", "USA", "NL", "MX", "JP"],
+      "prompt_module": "prompts.domains.real_estate",
+      "skills_path": "skills/real_estate/skills.yaml",
+      "seeders_path": "seeders/real_estate/manifest.yaml"
+    }
+  }
+}

@@ -186,7 +186,8 @@ def _create_municipality_tables(cursor) -> None:
             valid_from DATE NOT NULL,
             valid_to DATE,
             source TEXT,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (fsa, province, country)
         )
         """
     )

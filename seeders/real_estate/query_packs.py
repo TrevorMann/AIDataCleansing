@@ -32,17 +32,8 @@ class QueryPackSeeder(Seeder):
         return rows
 
     def upsert(self, conn, rows: list) -> int:
-        if not rows:
-            return 0
-        params = [(r["domain"], r["gap_type"], r["query_template"]) for r in rows]
-        with conn.cursor() as cur:
-            cur.executemany(
-                """
-                INSERT INTO query_pattern_memory (domain, gap_type, query_template)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (domain, gap_type, query_template) DO NOTHING
-                """,
-                params,
-            )
-        conn.commit()
-        return len(rows)
+        from db.upsert import bulk_insert_ignore
+        return bulk_insert_ignore(
+            conn, "query_pattern_memory", rows,
+            ["domain", "gap_type", "query_template"],
+        )

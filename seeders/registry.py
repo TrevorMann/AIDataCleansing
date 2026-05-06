@@ -43,7 +43,7 @@ class SeederRegistry:
             try:
                 count = s.run(conn)
                 results[s.name] = count
-                print(f"[{self.domain}/{s.name}] → {count} rows ({s.source_tag})")
+                print(f"[{self.domain}/{s.name}] -> {count} rows ({s.source_tag})")
             except Exception as e:
                 print(f"[{self.domain}/{s.name}] FAILED: {e}")
                 results[s.name] = None

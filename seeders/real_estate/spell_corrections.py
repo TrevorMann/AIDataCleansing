@@ -33,17 +33,5 @@ class SpellCorrectionsSeeder(Seeder):
         return rows
 
     def upsert(self, conn, rows: list) -> int:
-        if not rows:
-            return 0
-        params = [(r["wrong"], r["domain"], r["right"], r["source"], r["confidence"]) for r in rows]
-        with conn.cursor() as cur:
-            cur.executemany(
-                """
-                INSERT INTO spell_corrections (wrong, domain, right, source, confidence)
-                VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (wrong, domain) DO NOTHING
-                """,
-                params,
-            )
-        conn.commit()
-        return len(rows)
+        from db.upsert import bulk_insert_ignore
+        return bulk_insert_ignore(conn, "spell_corrections", rows, ["wrong", "domain"])
