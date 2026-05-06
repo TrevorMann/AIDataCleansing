@@ -1,0 +1,228 @@
+{
+  "metadata": {
+    "name": "general_cleaning",
+    "description": "Base prompt evaluation on general data cleaning (country ambiguity, spelling, formats)",
+    "schema": "Assumes raw_data table with: name, age, city, address, postal_code, municipality, state_province, country, phone"
+  },
+  "test_cases": [
+    {
+      "id": "ambiguous_country_1",
+      "description": "Ambiguous country detection — 'Toronto' is in Canada but record says nothing",
+      "input": {
+        "name": "John Smith",
+        "age": 35,
+        "city": "Toronto",
+        "address": "25 King Street",
+        "postal_code": "M5H 1E7",
+        "state_province": "ON",
+        "country": "",
+        "phone": "(416) 555-0123"
+      },
+      "expected_behavior": "Should flag country as Canada based on postal code M5H (Ontario), or infer from Toronto + ON. If unable to infer, leave blank and document reason.",
+      "evaluation_criteria": [
+        "Country is either 'Canada' or marked as 'unable to determine — see reason'",
+        "If country determined, state_province should be 'Ontario' not 'ON'",
+        "Reasoning is transparent (why it chose Canada or why it couldn't)"
+      ]
+    },
+    {
+      "id": "spelling_error_1",
+      "description": "Spelling error in city name",
+      "input": {
+        "name": "Jane Doe",
+        "age": 28,
+        "city": "Vancover",
+        "address": "123 Granville Ave",
+        "postal_code": "V6B 2W9",
+        "state_province": "BC",
+        "country": "Canada",
+        "phone": "(604) 555-0456"
+      },
+      "expected_behavior": "Should correct 'Vancover' to 'Vancouver'",
+      "evaluation_criteria": [
+        "City is corrected to 'Vancouver'",
+        "Reasoning explains the correction (obvious typo vs uncertain)",
+        "Postal code V6B is validated (if applicable)"
+      ]
+    },
+    {
+      "id": "format_validation_1",
+      "description": "Phone format varies by country",
+      "input": {
+        "name": "Alice Johnson",
+        "age": 42,
+        "city": "New York",
+        "address": "456 Broadway",
+        "postal_code": "10013",
+        "state_province": "NY",
+        "country": "United States",
+        "phone": "2125551234"
+      },
+      "expected_behavior": "Should format phone as (212) 555-1234 for USA, or note if unsure",
+      "evaluation_criteria": [
+        "Phone is formatted according to country standard (US: (XXX) XXX-XXXX)",
+        "If formatting is uncertain, original value preserved + reason documented",
+        "Country is 'United States' not 'USA'"
+      ]
+    },
+    {
+      "id": "partial_data_1",
+      "description": "Missing country — only city provided, infer from phone prefix",
+      "input": {
+        "name": "Bob Wilson",
+        "age": 55,
+        "city": "Amsterdam",
+        "address": "Herengracht 123",
+        "postal_code": "1012 GK",
+        "state_province": "",
+        "country": "",
+        "phone": "+31 20 5555555"
+      },
+      "expected_behavior": "Should infer country from city + postal code format (NL) or phone prefix (+31), or flag as unable to determine",
+      "evaluation_criteria": [
+        "Country is either 'Netherlands' or marked unable to determine",
+        "Reasoning is explicit about which signals led to decision",
+        "Phone format follows country standard if country inferred"
+      ]
+    },
+    {
+      "id": "proper_case_1",
+      "description": "Names and cities in wrong case",
+      "input": {
+        "name": "john mccarthy",
+        "age": 31,
+        "city": "MONTREAL",
+        "address": "789 rue de la paix",
+        "postal_code": "H1A 0A1",
+        "state_province": "qc",
+        "country": "canada",
+        "phone": "(514) 555-9876"
+      },
+      "expected_behavior": "Should apply proper case: John McCarthy, Montreal, Quebec, Canada",
+      "evaluation_criteria": [
+        "Name: John McCarthy (title case)",
+        "City: Montreal (title case)",
+        "State: Quebec not 'qc' or 'QC'",
+        "Country: Canada not 'canada'"
+      ]
+    },
+    {
+      "id": "street_abbreviation_1",
+      "description": "Street abbreviations should be expanded — Blvd. and trailing St.",
+      "input": {
+        "name": "Carol Davis",
+        "age": 44,
+        "city": "Calgary",
+        "address": "999 George Blvd.",
+        "postal_code": "T2R 1A7",
+        "state_province": "AB",
+        "country": "Canada",
+        "phone": "(403) 555-2109"
+      },
+      "expected_behavior": "Should expand 'Blvd.' to 'Boulevard'",
+      "evaluation_criteria": [
+        "Address contains 'Boulevard' not 'Blvd.'",
+        "Reasoning shows abbreviation expansion"
+      ]
+    },
+    {
+      "id": "confidence_uncertainty_1",
+      "description": "Record with multiple ambiguities — should document uncertainty",
+      "input": {
+        "name": "D. Smith",
+        "age": null,
+        "city": "Springfield",
+        "address": "42 Main",
+        "postal_code": "12345",
+        "state_province": "",
+        "country": "",
+        "phone": "555-1234"
+      },
+      "expected_behavior": "Should mark multiple fields as uncertain/unable to determine, not guess",
+      "evaluation_criteria": [
+        "Country: marked unable to determine (Springfield exists in many US states + other countries)",
+        "Phone: marked incomplete/uncertain (missing area code)",
+        "Each uncertain field has explicit reason for non-correction"
+      ]
+    },
+    {
+      "id": "valid_clean_record_1",
+      "description": "Already-clean record should pass through unchanged",
+      "input": {
+        "name": "Rachel Green",
+        "age": 26,
+        "city": "Seattle",
+        "address": "500 Pike Place Market Road",
+        "postal_code": "98101",
+        "state_province": "Washington",
+        "country": "United States",
+        "phone": "(206) 555-1234"
+      },
+      "expected_behavior": "Should recognize record is already clean, note no changes needed",
+      "evaluation_criteria": [
+        "All fields marked as valid/no changes",
+        "Reasoning is brief (record already conforms to all rules)"
+      ]
+    },
+    {
+      "id": "schema_type_mismatch_1",
+      "description": "Age field has non-numeric value",
+      "input": {
+        "name": "Eve Turner",
+        "age": "twenty-five",
+        "city": "Boston",
+        "address": "100 Newbury Street",
+        "postal_code": "02115",
+        "state_province": "Massachusetts",
+        "country": "United States",
+        "phone": "(617) 555-5555"
+      },
+      "expected_behavior": "Should flag age as non-numeric, leave unchanged and document why not converted",
+      "evaluation_criteria": [
+        "Age remains 'twenty-five' (not silently changed to 25)",
+        "Reason documented: age is non-numeric string, cannot reliably convert",
+        "No silent type coercion"
+      ]
+    },
+    {
+      "id": "european_phone_1",
+      "description": "European phone format validation — Germany",
+      "input": {
+        "name": "Klaus Mueller",
+        "age": 52,
+        "city": "Berlin",
+        "address": "Kurfürstendamm 123",
+        "postal_code": "10711",
+        "state_province": "Berlin",
+        "country": "Germany",
+        "phone": "030 12345678"
+      },
+      "expected_behavior": "Should recognize German local format and standardize with country code (+49)",
+      "evaluation_criteria": [
+        "Phone formatted as +49 30 12345678 or similar (German standard)",
+        "Reasoning shows country → phone format mapping"
+      ]
+    },
+    {
+      "id": "address_expansion_edge_case",
+      "description": "Multiple 'St' occurrences: city name, street name, street type",
+      "input": {
+        "name": "Klaus Mueller",
+        "age": 52,
+        "city": "St Catherine",
+        "address": "24 St Paul St",
+        "postal_code": "L2R 7L2",
+        "state_province": "ON",
+        "country": "CA",
+        "phone": "+12127895264"
+      },
+      "expected_behavior": "Should only expand the trailing 'St' (street type) in address, not the 'St' in 'St Paul' (proper noun) or city name",
+      "evaluation_criteria": [
+        "Address contains 'Street' as the suffix (24 St Paul Street)",
+        "City 'St Catherine' should not become 'Street Catherine'",
+        "Country 'CA' expanded to 'Canada'",
+        "Reasoning demonstrates awareness of context for each 'St' occurrence"
+      ]
+    }
+  ]
+}
