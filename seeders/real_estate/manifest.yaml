@@ -4,6 +4,13 @@ schema_migrations:
 - db/migrations/001_municipality_tables.sql
 - db/migrations/003_spell_corrections.sql
 seeders:
+- name: column_metadata
+  class: seeders.real_estate.column_metadata.ColumnMetadataSeeder
+  enabled: true
+  refresh_cadence: as_needed
+  license: internal
+  config:
+    seed_yaml: data/seeds/real_estate/column_metadata.yaml
 - name: wikipedia_fsa
   class: seeders.real_estate.wikipedia_fsa.WikipediaFSASeeder
   enabled: true

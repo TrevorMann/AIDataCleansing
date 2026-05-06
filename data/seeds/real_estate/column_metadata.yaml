@@ -1,0 +1,43 @@
+domain: real_estate
+
+# Column metadata for real_estate domain.
+# Entries here override 'base' domain entries for the same (table, column).
+# Add new tables here as the domain grows — the schema prompt is driven by this file.
+
+tables:
+  raw_data:
+    # Override base municipality description — real estate context is specific
+    - column: municipality
+      description: >-
+        Real estate neighbourhood — the name buyers search, not administrative boundaries.
+        Examples: The Annex, North York, Plateau-Mont-Royal, Little Italy, Upper East Side.
+        Must reflect buyer search behaviour, not city/district admin names.
+
+    # Extra columns added by add_columns_to_listings migration
+    - column: normalized_municipality
+      description: >-
+        Canonical neighbourhood after skill lookup — populated by municipality skill,
+        not by LLM direct cleaning. Leave blank; pipeline fills this.
+    - column: confidence_score
+      description: >-
+        Confidence 0.0-1.0 of municipality normalization — populated by skills pipeline.
+        Not an LLM output field.
+    - column: normalization_status
+      description: >-
+        Status of municipality normalization: pending / resolved / manual / failed.
+        Set by pipeline, not LLM.
+
+  cleaned_data:
+    - column: municipality
+      description: >-
+        Verified real estate neighbourhood name matching buyer search terms
+        (e.g. The Annex, not Toronto; North York, not City of Toronto).
+    - column: normalized_municipality
+      description: >-
+        Canonical neighbourhood after lookup — populated by municipality skill, not LLM.
+    - column: confidence_score
+      description: >-
+        Confidence 0.0-1.0 from skills pipeline normalization. Not an LLM output.
+    - column: normalization_status
+      description: >-
+        Normalization status from pipeline: pending / resolved / manual / failed.

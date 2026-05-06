@@ -93,13 +93,26 @@ def init_db(db_path: str) -> None:
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS column_metadata (
+                domain      TEXT NOT NULL DEFAULT 'base',
                 table_name  TEXT NOT NULL,
                 column_name TEXT NOT NULL,
                 description TEXT,
-                PRIMARY KEY (table_name, column_name)
+                PRIMARY KEY (domain, table_name, column_name)
             )
             """
         )
+        # Migration: add domain column if existing install lacks it
+        cursor.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='column_metadata' AND column_name='domain'
+                ) THEN
+                    ALTER TABLE column_metadata ADD COLUMN domain TEXT NOT NULL DEFAULT 'base';
+                END IF;
+            END $$
+        """)
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS column_profiles (
@@ -285,34 +298,34 @@ def add_source_column_to_cache(conn: Any) -> None:
 
 
 def _seed_column_metadata(cursor) -> None:
-    defaults = [
-        ("raw_data", "name", "Full name of the contact in Proper Case"),
-        ("raw_data", "age", "Integer between 1 and 120"),
-        ("raw_data", "city", "City name in Proper Case"),
-        ("raw_data", "address", "Street address with standardized abbreviations (Street, Avenue, Road)"),
-        ("raw_data", "postal_code", "Postal/ZIP code in the format for the record country"),
-        ("raw_data", "municipality", "Real estate neighbourhood name (e.g. North York, Upper East Side)"),
-        ("raw_data", "state_province", "Full state or province name (e.g. Ontario, New York)"),
-        ("raw_data", "country", "Must be one of: CA, USA, NL, MX, JP"),
-        ("raw_data", "phone", "Phone number in country-appropriate format"),
-        ("cleaned_data", "name", "Cleaned full name in Proper Case"),
-        ("cleaned_data", "age", "Integer between 1 and 120"),
-        ("cleaned_data", "city", "Cleaned city name in Proper Case"),
-        ("cleaned_data", "address", "Cleaned street address"),
-        ("cleaned_data", "postal_code", "Validated postal/ZIP code"),
-        ("cleaned_data", "municipality", "Verified real estate neighbourhood name"),
-        ("cleaned_data", "state_province", "Full state or province name"),
-        ("cleaned_data", "country", "Full country name (e.g. Canada, United States)"),
-        ("cleaned_data", "phone", "Standardized phone number"),
-        ("cleaned_data", "validation_notes", "Notes on what was changed and confidence level"),
+    base = [
+        ("base", "raw_data", "name",           "Full name of contact — may have typos or wrong case. Clean to Proper Case."),
+        ("base", "raw_data", "age",            "Age in years (integer 1-120). Non-numeric values are invalid."),
+        ("base", "raw_data", "city",           "City name — may have typos or wrong case. Clean to Proper Case."),
+        ("base", "raw_data", "address",        "Street address — expand abbreviations: St→Street, Ave→Avenue, Rd→Road, Blvd→Boulevard. Do not alter proper nouns."),
+        ("base", "raw_data", "postal_code",    "Postal/ZIP code. Format depends on country (e.g. A1A 1A1 for Canada, 5 digits for USA). Validate format against country; do not guess if uncertain."),
+        ("base", "raw_data", "municipality",   "Municipality or district name."),
+        ("base", "raw_data", "state_province", "Full state or province name (e.g. Ontario, New York). Not abbreviated."),
+        ("base", "raw_data", "country",        "Country as provided in raw input — may be a code (CA, US), abbreviation (USA), or full name. Standardize to full name in cleaned output (e.g. Canada, United States, Netherlands, Mexico, Japan)."),
+        ("base", "raw_data", "phone",          "Phone number — format per country standard. Leave unchanged if country unknown."),
+        ("base", "cleaned_data", "name",             "Cleaned full name in Proper Case."),
+        ("base", "cleaned_data", "age",              "Validated age (integer 1-120)."),
+        ("base", "cleaned_data", "city",             "Cleaned city name in Proper Case."),
+        ("base", "cleaned_data", "address",          "Cleaned street address with standardized abbreviations."),
+        ("base", "cleaned_data", "postal_code",      "Validated postal/ZIP code in country-standard format."),
+        ("base", "cleaned_data", "municipality",     "Cleaned municipality or district name."),
+        ("base", "cleaned_data", "state_province",   "Full state or province name."),
+        ("base", "cleaned_data", "country",          "Full country name (e.g. Canada, United States, Netherlands, Mexico, Japan)."),
+        ("base", "cleaned_data", "phone",            "Phone number in country-standard format."),
+        ("base", "cleaned_data", "validation_notes", "Notes on every decision: what changed, what was uncertain, confidence level. Document each field."),
     ]
     cursor.executemany(
         """
-        INSERT INTO column_metadata (table_name, column_name, description)
-        VALUES (%s, %s, %s)
-        ON CONFLICT (table_name, column_name) DO NOTHING
+        INSERT INTO column_metadata (domain, table_name, column_name, description)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (domain, table_name, column_name) DO NOTHING
         """,
-        defaults,
+        base,
     )
 
 

@@ -35,11 +35,25 @@ class PromptEvaluator:
        d. Store results for metrics calculation
     """
 
-    def __init__(self, db_path: str = "data/cleaning.db"):
-        """Initialize evaluator with LLM client."""
+    def __init__(
+        self,
+        db_path: str = "data/cleaning.db",
+        domain: str = "base",
+        sub: str | None = None,
+    ):
+        """
+        Initialize evaluator.
+
+        Args:
+            db_path: SQLite DB path (for schema discovery)
+            domain:  Domain name for schema + prompt assembly (e.g. 'real_estate', 'base')
+            sub:     Sub-category key for domain prompt (e.g. 'CA' for Canada real estate)
+        """
         self.client, self.backend, self.model = create_client()
         self.db_path = db_path
-        self.schema = format_schema_for_prompt(db_path)
+        self.domain = domain
+        self.sub = sub
+        self.schema = format_schema_for_prompt(db_path, domain=domain)
         self.results = []
 
     def load_dataset(self, dataset_path: str) -> dict:
@@ -63,7 +77,8 @@ class PromptEvaluator:
         trace.append(f"Evaluating: {test_case.get('id')} — {test_case.get('description')}")
 
         # Step 1: Build system prompt with schema
-        system_prompt = build_system_prompt(sub=None, schema=self.schema, domain=None)
+        prompt_domain = None if self.domain == "base" else self.domain
+        system_prompt = build_system_prompt(sub=self.sub, schema=self.schema, domain=prompt_domain)
         trace.append(f"System prompt length: {len(system_prompt)} chars")
 
         # Step 2: Format record as user message
@@ -115,6 +130,8 @@ class PromptEvaluator:
             "llm_response": llm_response,
             "model": self.model,
             "backend": self.backend,
+            "domain": self.domain,
+            "sub": self.sub,
             "tokens": {
                 "input": response.usage.input_tokens,
                 "output": response.usage.output_tokens,

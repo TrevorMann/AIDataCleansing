@@ -47,15 +47,22 @@ def list_datasets():
             print(f"  {p.stem}  (could not read metadata)")
 
 
-def generate_dataset(num_cases: int, output_name: str) -> Path:
-    """Auto-generate dataset from base prompt + schema."""
+def generate_dataset(
+    num_cases: int,
+    output_name: str,
+    domain: str = "base",
+    sub: str | None = None,
+) -> Path:
+    """Auto-generate dataset from prompt + schema for given domain/sub."""
     from evals.dataset_generator import DatasetGenerator
     from prompts import build_system_prompt
     from schema_discovery import format_schema_for_prompt
 
-    logger.info(f"Generating {num_cases} test cases from base prompt...")
-    schema = format_schema_for_prompt("data/cleaning.db")
-    prompt = build_system_prompt(sub=None, schema=schema)
+    label = f"{domain}" + (f"/{sub}" if sub else "")
+    logger.info(f"Generating {num_cases} test cases for domain={label}...")
+    schema = format_schema_for_prompt("data/cleaning.db", domain=domain)
+    prompt_domain = None if domain == "base" else domain
+    prompt = build_system_prompt(sub=sub, schema=schema, domain=prompt_domain)
 
     gen = DatasetGenerator(prompt, schema=schema, dataset_name=output_name)
     dataset = gen.generate_dataset(num_cases=num_cases)
@@ -66,7 +73,13 @@ def generate_dataset(num_cases: int, output_name: str) -> Path:
     return output_path
 
 
-def run_evaluation(dataset_path: Path, output_json: bool, output_html: bool) -> None:
+def run_evaluation(
+    dataset_path: Path,
+    output_json: bool,
+    output_html: bool,
+    domain: str = "base",
+    sub: str | None = None,
+) -> None:
     """Run full evaluation pipeline: evaluate → metrics → report."""
     from evals.prompt_evaluator import PromptEvaluator
     from evals.metrics import MetricsCollector
@@ -82,7 +95,7 @@ def run_evaluation(dataset_path: Path, output_json: bool, output_html: bool) -> 
     logger.info("=" * 70)
     logger.info(f"Dataset: {dataset_path}")
 
-    evaluator = PromptEvaluator()
+    evaluator = PromptEvaluator(domain=domain, sub=sub)
     results = evaluator.evaluate_dataset(str(dataset_path))
     logger.info(f"✅ Completed {len(results)} evaluations\n")
 
@@ -176,6 +189,18 @@ Examples:
         help="List available datasets and exit"
     )
 
+    # Domain / sub-category
+    parser.add_argument(
+        "--domain",
+        default="base",
+        help="Domain for schema + prompt assembly (e.g. real_estate, base). Default: base"
+    )
+    parser.add_argument(
+        "--sub",
+        default=None,
+        help="Sub-category key for domain prompt (e.g. CA for Canada real estate)"
+    )
+
     # Generation options
     parser.add_argument(
         "--num-cases",
@@ -221,7 +246,9 @@ Examples:
     if args.generate:
         dataset_path = generate_dataset(
             num_cases=args.num_cases,
-            output_name=args.generated_name
+            output_name=args.generated_name,
+            domain=args.domain,
+            sub=args.sub,
         )
     elif args.dataset:
         dataset_path = DATASETS_DIR / f"{args.dataset}.json"
@@ -245,6 +272,8 @@ Examples:
         dataset_path=dataset_path,
         output_json=args.output_json,
         output_html=args.output_html,
+        domain=args.domain,
+        sub=args.sub,
     )
 
 
