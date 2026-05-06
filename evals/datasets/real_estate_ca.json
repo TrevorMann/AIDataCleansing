@@ -1,0 +1,268 @@
+{
+  "metadata": {
+    "name": "real_estate_ca",
+    "description": "Auto-generated dataset from prompt (12 requested, 12 generated)",
+    "generated_at": "2026-05-06T12:22:02.109025",
+    "backend": "openrouter",
+    "model": "openai/gpt-oss-20b:free"
+  },
+  "extracted_rules": "1. Validate all numeric fields (age, postal_code digits, phone digits) against the specified format and range; if invalid, leave unchanged and document the issue.  \n2. Postal codes must match their country\u2019s standard format (e.g., 5 digits for US, A1A\u202f1A1 for Canada); if the format is unrecognizable, keep the original and note uncertainty.  \n3. Standardize state/province names to their full, unabbreviated forms and country names to full, official names (e.g., \u201cCanada\u201d not \u201cCA\u201d or \u201cUSA\u201d).  \n4. Expand street abbreviations only in the address field (St\u202f\u2192\u202fStreet, Ave\u202f\u2192\u202fAvenue, Rd\u202f\u2192\u202fRoad, Blvd\u202f\u2192\u202fBoulevard) unless the surrounding text indicates a proper noun that should stay unchanged.  \n5. Convert names and city names to Proper Case; if a spelling correction is uncertain, retain the original value and record the reason.  \n6. If a record\u2019s country is missing but an IP address is available, infer the country from the IP; if the country cannot be confidently determined, leave the country blank and note the limitation.  \n7. For postal codes that are full (6 characters, e.g., M6H\u202f1E7), never modify them; use them as authoritative and only verify via web search.  \n8. For partial FSA postal codes (3 characters), attempt a web search to resolve the full code; if only one confident match is found, complete the code and record high confidence; if ambiguous, set the code to \u201cFSA ?\u201d and flag for review.  \n9. If a postal code is missing, perform a web search using the street address, city, and province; populate the code only if a single confident result is returned; otherwise set the field to \u201cN/A\u201d.  \n10. Apply the Canadian cross\u2011province sanity check: if the first letter of the postal code does not match the stated province/city, flag a \u201cCROSS\u2011PROVINCE MISMATCH\u201d and set municipality to \u201cN/A\u201d, halting further processing for that record.  \n11. The municipality field must reflect the real\u2011estate neighbourhood, not the administrative city or district; determine it via web search using the full postal code or resolved address, and record the confidence level.  \n12. If any field cannot be confidently determined or verified (postal code, municipality, country, state/province, phone format), leave the original value and document the uncertainty in validation_notes.  \n13. All date fields (if present) must be formatted as ISO 8601; if the format is incorrect or ambiguous, retain the original value and note the issue.  \n14. General cleaning (typos, inconsistent casing) should be performed only when the correction is certain; otherwise, maintain the original data and record the decision.  \n15. Validation notes must accompany every change, detailing what was altered, the rationale, and a confidence level (HIGH/MEDIUM/LOW).",
+  "test_cases": [
+    {
+      "id": "test_case_1",
+      "description": "All fields already conform to standards (happy path)",
+      "input": {
+        "address": "123 Maple Street",
+        "age": "45",
+        "city": "Toronto",
+        "country": "Canada",
+        "municipality": "Midtown",
+        "name": "John Smith",
+        "phone": "+1 (416) 555-1234",
+        "postal_code": "M5V 2T6",
+        "state_province": "Ontario"
+      },
+      "expected_behavior": "No changes are made; validation_notes indicate all fields validated with HIGH confidence",
+      "evaluation_criteria": [
+        "cleaned_data matches raw_data exactly",
+        "validation_notes contains no changes",
+        "No fields flagged for review"
+      ]
+    },
+    {
+      "id": "test_case_2",
+      "description": "Name spelled incorrectly, case issue in city, postcode partially missing",
+      "input": {
+        "address": "456 Oak Rd",
+        "age": "30",
+        "city": "loma lAdjLl",
+        "country": "CA",
+        "municipality": "New North",
+        "name": "jane doEg",
+        "phone": "212-555-9876",
+        "postal_code": "1001",
+        "state_province": "AB"
+      },
+      "expected_behavior": "Name corrected to Proper Case; city corrected to Proper Case; country expanded from CA to Canada; state_province expanded from AB to Alberta; postal_code left unchanged with note about unrecognized format",
+      "evaluation_criteria": [
+        "name changed to \"Jane Doeg\"",
+        "city changed to \"Loma Ladjll\"",
+        "country set to \"Canada\"",
+        "state_province changed to \"Alberta\"",
+        "postal_code unchanged with note about unrecognized format"
+      ]
+    },
+    {
+      "id": "test_case_3",
+      "description": "Missing country but IP available inferring Canada",
+      "input": {
+        "address": "789 Pine Blvd",
+        "age": "27",
+        "city": "Vancouver",
+        "country": null,
+        "municipality": "Kitsilano",
+        "name": "Alice Johnson",
+        "phone": "(604) 555-2222",
+        "postal_code": "V5K 2H6",
+        "state_province": "BC",
+        "ip_address": "23.45.67.89"
+      },
+      "expected_behavior": "Country inferred as Canada from IP; state_province expanded to British Columbia; phone format validated; other fields unchanged",
+      "evaluation_criteria": [
+        "country set to \"Canada\"",
+        "state_province set to \"British Columbia\"",
+        "validation_notes include IP inference with HIGH confidence",
+        "phone validated against Canadian format"
+      ]
+    },
+    {
+      "id": "test_case_4",
+      "description": "State abbreviation for US, no postal code provided, address triggers unique lookup",
+      "input": {
+        "address": "321 Birch Ave",
+        "age": "52",
+        "city": "Brandon",
+        "country": "Can",
+        "municipality": "Downtown",
+        "name": "Bob Brown",
+        "phone": "518-555-3333",
+        "postal_code": null,
+        "state_province": "MB",
+        "ip_address": "184.70.44.78"
+      },
+      "expected_behavior": "country corrected from Can to Canada (using IP 184.70.44.78 to confirm if needed); state_province expanded from MB to Manitoba; postal_code left null with note that lookup is required; municipality preserved pending lookup",
+      "evaluation_criteria": [
+        "country set to \"Canada\"",
+        "state_province changed to \"Manitoba\"",
+        "postal_code remains null with validation note that lookup is required",
+        "validation_notes reflect changes and reasoning"
+      ]
+    },
+    {
+      "id": "test_case_5",
+      "description": "Canadian FSA-only postal code — LLM flags for pipeline lookup, does not pre-emptively set N/A",
+      "input": {
+        "address": "1100 Cedar Street",
+        "age": "38",
+        "city": "Winnipeg",
+        "country": "CA",
+        "municipality": "Near River",
+        "name": "Meg Turner",
+        "phone": "204-555-7777",
+        "postal_code": "R3C",
+        "state_province": "Manitoba"
+      },
+      "expected_behavior": "country expanded to Canada; phone formatted to Canadian standard; postal_code left as R3C with note that it is a partial FSA requiring lookup; municipality left as Near River (original preserved — N/A is only valid after a failed lookup, not before)",
+      "evaluation_criteria": [
+        "country set to \"Canada\"",
+        "phone formatted to \"+1 (204) 555-7777\"",
+        "postal_code remains \"R3C\" with validation note that it is partial and requires lookup",
+        "municipality NOT set to N/A — original value preserved pending pipeline resolution"
+      ]
+    },
+    {
+      "id": "test_case_6",
+      "description": "Postal code missing but address unique, web search yields multiple matches",
+      "input": {
+        "address": "15 Palm Drive",
+        "age": "29",
+        "city": "Miami",
+        "country": "United States",
+        "municipality": "South Beach",
+        "name": "Carlos Ruiz",
+        "phone": "305-555-8888",
+        "postal_code": null,
+        "state_province": "Florida"
+      },
+      "expected_behavior": "postal_code set to N/A due to ambiguous search; municipality left as is with LOW confidence note",
+      "evaluation_criteria": [
+        "postal_code set to \"N/A\"",
+        "validation_notes indicate ambiguous results",
+        "municipality unchanged"
+      ]
+    },
+    {
+      "id": "test_case_7",
+      "description": "Cross\u2011province mismatch detected in Canadian postal code and province",
+      "input": {
+        "address": "88 Willow Rd",
+        "age": "41",
+        "city": "St. Gallen",
+        "country": "Canada",
+        "municipality": "Historic Centre",
+        "name": "Lars S\u00f6luk",
+        "phone": "044-555-9999",
+        "postal_code": "Z1T 1P5",
+        "state_province": "Ontario"
+      },
+      "expected_behavior": "Cross\u2011province mismatch flagged; municipality set to N/A; processing halted for this record",
+      "evaluation_criteria": [
+        "municipality set to \"N/A\"",
+        "validation_notes contain CROSS\u2011PROVINCE MISMATCH flag",
+        "no further changes made"
+      ]
+    },
+    {
+      "id": "test_case_8",
+      "description": "Invalid age non\u2011numeric, phone format incorrect for country",
+      "input": {
+        "address": "23 Birchwood St",
+        "age": "twenty",
+        "city": "Edinburgh",
+        "country": "United Kingdom",
+        "municipality": "Leith",
+        "name": "Ewan Wallace",
+        "phone": "148-555-000",
+        "postal_code": "EH3W 1RC",
+        "state_province": "Scotland"
+      },
+      "expected_behavior": "age left unchanged with note; phone left unchanged with note about format uncertainty; other fields validated",
+      "evaluation_criteria": [
+        "age unchanged",
+        "phone unchanged",
+        "validation_notes for both fields indicating uncertainty"
+      ]
+    },
+    {
+      "id": "test_case_9",
+      "description": "Edge case: complete Canadian postal code with whitespace variation",
+      "input": {
+        "address": "92 Ash Boulevard",
+        "age": "58",
+        "city": "Calgary",
+        "country": "CA",
+        "municipality": "Elbow Park",
+        "name": "Susan Lee",
+        "phone": "403-555-4444",
+        "postal_code": "T2P3W6",
+        "state_province": "Alberta"
+      },
+      "expected_behavior": "Postal code left as full, whitespace corrected if needed; no modification; validation notes confirm authoritative code",
+      "evaluation_criteria": [
+        "postal_code unchanged",
+        "validation_notes indicate authoritative nature"
+      ]
+    },
+    {
+      "id": "test_case_10",
+      "description": "Phone number missing for country, cannot infer; leave unchanged",
+      "input": {
+        "address": "5 Cherryln St",
+        "age": "33",
+        "city": "Berlin",
+        "country": "Germany",
+        "municipality": "Mitte",
+        "name": "Max M\u00fcller",
+        "phone": null,
+        "postal_code": "10117",
+        "state_province": "Berlin"
+      },
+      "expected_behavior": "Phone left null; validation_notes note lack of data; other fields verified",
+      "evaluation_criteria": [
+        "phone remains null",
+        "validation_notes mention missing phone",
+        "other fields validated normally"
+      ]
+    },
+    {
+      "id": "test_case_11",
+      "description": "Ambiguous municipality needing web search, yet only one match found",
+      "input": {
+        "address": "79 Oak Avenue",
+        "age": "45",
+        "city": "Vancouver",
+        "country": "Canada",
+        "municipality": "West End",
+        "name": "Lisa Patel",
+        "phone": "604-555-1212",
+        "postal_code": "V6G 2E9",
+        "state_province": "British Columbia"
+      },
+      "expected_behavior": "municipality confirmed as West End with HIGH confidence; validation_notes reflect source",
+      "evaluation_criteria": [
+        "municipality unchanged",
+        "validation_notes include confidence level HIGH"
+      ]
+    },
+    {
+      "id": "test_case_12",
+      "description": "Address contains proper noun abbreviation not to be expanded",
+      "input": {
+        "address": "St John St",
+        "age": "28",
+        "city": "Toronto",
+        "country": "Canada",
+        "municipality": "Old Town",
+        "name": "Paul de la Croix",
+        "phone": "416-555-3333",
+        "postal_code": "M5Z 1Z7",
+        "state_province": "Ontario"
+      },
+      "expected_behavior": "Address kept exactly; no abbreviation expansion; validation notes note decision",
+      "evaluation_criteria": [
+        "address unchanged",
+        "validation_notes explain no expansion due to proper noun"
+      ]
+    }
+  ]
+}
