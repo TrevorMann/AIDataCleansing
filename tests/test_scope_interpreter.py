@@ -1,7 +1,6 @@
 import os
 import tempfile
 from unittest.mock import MagicMock
-import pytest
 from database import init_db
 from scope_interpreter import ScopeInterpreter
 
@@ -84,3 +83,11 @@ def test_interpret_passes_schema_in_user_message():
     user_content = messages[0]["content"]
     assert "Schema" in user_content
     assert "clean all data" in user_content
+
+
+def test_interpret_returns_none_when_llm_returns_non_dict():
+    db = _make_db()
+    client = _mock_client('["CA", "USA"]')
+    interp = ScopeInterpreter(client, "anthropic", "claude-haiku-4-5-20251001")
+    result = interp.interpret("clean data", "real_estate", db)
+    assert result is None

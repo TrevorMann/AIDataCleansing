@@ -1,7 +1,7 @@
 import json
 import logging
 from schema_discovery import format_schema_for_prompt
-from llm_client_factory import build_message_kwargs, log_usage
+from llm_client_factory import build_message_kwargs, log_usage, build_system_param
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ class ScopeInterpreter:
         response = self._client.messages.create(
             model=self._model,
             max_tokens=200,
-            system=_SYSTEM,
+            system=build_system_param(self._backend, _SYSTEM),
             messages=[{"role": "user", "content": user_msg}],
             **kwargs,
         )
