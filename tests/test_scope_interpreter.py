@@ -1,6 +1,7 @@
 import os
 import tempfile
 from unittest.mock import MagicMock
+from data_cleaning_agent import DataCleaningAgent
 from database import init_db
 from scope_interpreter import ScopeInterpreter
 
@@ -91,9 +92,6 @@ def test_interpret_returns_none_when_llm_returns_non_dict():
     interp = ScopeInterpreter(client, "anthropic", "claude-haiku-4-5-20251001")
     result = interp.interpret("clean data", "real_estate", db)
     assert result is None
-
-
-from data_cleaning_agent import DataCleaningAgent
 
 
 def test_interpret_user_query_no_country_filter():
