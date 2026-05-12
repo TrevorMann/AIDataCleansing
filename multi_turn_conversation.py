@@ -21,6 +21,7 @@ from guardrails import (
 from prompts import build_system_prompt
 from skill_router import detect_skill, load_skill
 from llm_client_factory import create_client, build_system_param, build_message_kwargs, log_usage, OPENROUTER, ANTHROPIC
+from scope_interpreter import ScopeInterpreter
 
 # Read .env file without requiring python-dotenv
 def load_env():
@@ -796,14 +797,20 @@ class DataCleaningConversation:
         workflow_start = time.time()
         agent = DataCleaningAgent(DB_PATH)
 
-        # Step 1: Interpret query
+        # Step 1: Interpret scope via LLM + extract structural modifiers
         print(f"\n{'='*80}")
-        print("STEP 1: INTERPRETING QUERY")
+        print("STEP 1: INTERPRETING SCOPE")
         print(f"{'='*80}")
         t = time.time()
+        scope_filter = ScopeInterpreter(_CLIENT, _BACKEND, _MODEL).interpret(
+            user_query, _ACTIVE_DOMAIN, DB_PATH
+        )
+        if scope_filter is None:
+            return "❌ No data found to clean based on your ask."
         filters = agent.interpret_user_query(user_query)
+        filters.update(scope_filter)
         step1_elapsed = time.time() - t
-        print(f"  Query: '{user_query}'  →  filters: {filters}")
+        print(f"  scope_filter={scope_filter}  filters={filters}")
         print(f"  ⏱️  {step1_elapsed:.2f}s\n")
 
         # Step 2: Fetch records
@@ -814,33 +821,15 @@ class DataCleaningConversation:
         records = agent.fetch_data_for_query(filters)
         step2_elapsed = time.time() - t
         if not records:
-            sample = get_all_raw_data(DB_PATH)[:50]
-            if not sample:
-                return "❌ No records in database. Add some data first."
-            from collections import Counter
-            groups = Counter(r.get('country', 'unknown') for r in sample)
-            options = ", ".join(f"{c} ({n})" for c, n in sorted(groups.items()))
-            return (
-                f"❌ No records matched '{user_query}'.\n"
-                f"Available data: {options}\n"
-                f"Try 'CLEAN all data' or be more specific (e.g. 'CLEAN Canadian data')."
-            )
+            return "❌ No records found to clean based on your ask."
         print(f"  ✅ {len(records)} records  ⏱️  {step2_elapsed:.2f}s\n")
 
-        # Auto-detect country scope from records if not passed explicitly
+        # Derive sub-category scope from filter using domain config
         if not country_scope:
-            _NORMALIZE = {
-                'CA': 'CA', 'CANADA': 'CA',
-                'USA': 'USA', 'US': 'USA', 'UNITED STATES': 'USA', 'AMERICA': 'USA',
-                'NL': 'NL', 'NETHERLANDS': 'NL',
-                'MX': 'MX', 'MEXICO': 'MX',
-                'JP': 'JP', 'JAPAN': 'JP',
-            }
-            codes = {_NORMALIZE.get(r.get('country', '').strip().upper()) for r in records}
-            codes.discard(None)
-            if len(codes) == 1:
-                country_scope = codes.pop()
-                print(f"  Auto-detected country scope: {country_scope}\n")
+            sub_dim = _DOMAIN_CONFIG.get('sub_category_dimension')
+            if sub_dim and sub_dim in scope_filter:
+                country_scope = scope_filter[sub_dim]
+                print(f"  Sub-category: {country_scope}\n")
 
         # Step 3: Deterministic pre-cleaning (Python only, no API call)
         print(f"{'='*80}")
@@ -870,7 +859,7 @@ class DataCleaningConversation:
             print(f"{'='*80}")
             t = time.time()
             research_table = agent.format_research_batch(needs_research)
-            research_prompt = build_research_prompt(country_scope or 'CA', research_table)
+            research_prompt = build_research_prompt(country_scope, research_table)
             step4_elapsed = time.time() - t
             print(f"  Sending {len(needs_research)}/{len(records)} records to Claude")
             print(f"  Prompt size: {len(research_prompt):,} chars  ⏱️  {step4_elapsed:.2f}s\n")
@@ -889,7 +878,7 @@ class DataCleaningConversation:
             max_rounds = 20
 
             # Focused system prompt: base + domain/country rules only (no DB schema = shorter prompt)
-            research_system = build_system_prompt(sub=country_scope or 'CA', schema='')
+            research_system = build_system_prompt(sub=country_scope, schema='')
 
             # PATH A (openrouter): system is plain string, no caching
             # PATH B (anthropic):  system is list of blocks; base prompt cached via cache_control
