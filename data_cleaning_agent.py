@@ -33,40 +33,13 @@ class DataCleaningAgent:
         self.cleaned_results = []
 
     def interpret_user_query(self, user_query: str) -> dict:
-        """Parse user query to understand what data to fetch.
+        """Parse user query for scope/limit/issue-type modifiers.
 
-        Examples:
-        - "clean all Canadian data" -> country: CA/Canada
-        - "clean records with bad phone numbers" -> filter: phone issues
-        - "clean North American data" -> country: CA, USA, Mexico
-        - "clean all uncleaned data" -> all records needing cleaning
+        Country filtering is handled by ScopeInterpreter (LLM-driven).
+        This method only extracts structural query modifiers.
         """
         query_lower = user_query.lower()
         filters = {}
-
-        # Comprehensive country detection (case-insensitive)
-        country_map = {
-            # Canada
-            'canadian': 'CA', 'canada': 'CA', 'cdn': 'CA',
-            # USA
-            'american': 'USA', 'usa': 'USA', 'u.s.': 'USA', 'u.s.a.': 'USA',
-            'united states': 'USA', 'america': 'USA',
-            # Mexico
-            'mexican': 'Mexico', 'mexico': 'Mexico', 'méxico': 'Mexico',
-            # Japan
-            'japanese': 'JP', 'japan': 'JP', 'nippon': 'JP',
-            # Netherlands
-            'dutch': 'NL', 'netherlands': 'NL', 'holland': 'NL',
-            'the netherlands': 'NL',
-            # Regional
-            'north american': ['CA', 'USA', 'Mexico'],
-            'european': ['NL'],
-        }
-
-        for key, country in country_map.items():
-            if key in query_lower:
-                filters['country'] = country
-                break
 
         # Issue type detection
         if 'phone' in query_lower:

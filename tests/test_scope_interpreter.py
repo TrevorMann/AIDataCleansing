@@ -91,3 +91,36 @@ def test_interpret_returns_none_when_llm_returns_non_dict():
     interp = ScopeInterpreter(client, "anthropic", "claude-haiku-4-5-20251001")
     result = interp.interpret("clean data", "real_estate", db)
     assert result is None
+
+
+from data_cleaning_agent import DataCleaningAgent
+
+
+def test_interpret_user_query_no_country_filter():
+    """country_map removed — country must NOT appear in filters."""
+    db = _make_db()
+    agent = DataCleaningAgent(db)
+    result = agent.interpret_user_query("clean US data")
+    assert "country" not in result
+
+
+def test_interpret_user_query_keeps_scope_all():
+    db = _make_db()
+    agent = DataCleaningAgent(db)
+    result = agent.interpret_user_query("clean all uncleaned data")
+    assert result.get("scope") == "all_uncleaned"
+
+
+def test_interpret_user_query_keeps_issue_type_phone():
+    db = _make_db()
+    agent = DataCleaningAgent(db)
+    result = agent.interpret_user_query("fix phone numbers")
+    assert result.get("issue_type") == "phone"
+
+
+def test_interpret_user_query_keeps_limit():
+    db = _make_db()
+    agent = DataCleaningAgent(db)
+    result = agent.interpret_user_query("clean first batch")
+    assert result.get("scope") == "first_batch"
+    assert result.get("limit") == 5
