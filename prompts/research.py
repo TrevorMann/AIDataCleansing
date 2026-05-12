@@ -43,7 +43,7 @@ _COUNTRY_NOTES: dict[str, str] = {
 }
 
 
-def build_research_prompt(country_scope: str, data: str) -> str:
+def build_research_prompt(country_scope: str | None, data: str) -> str:
     """Build the focused research prompt for a given country and formatted data table."""
     notes = _COUNTRY_NOTES.get(country_scope, "")
     return _BASE_RESEARCH + notes + "\n" + data
