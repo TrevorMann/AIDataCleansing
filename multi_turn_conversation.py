@@ -209,6 +209,10 @@ def detect_country_scope(user_query: str) -> str | None:
     matched = [code for code, keywords in country_keywords.items()
                if any(kw in query_lower for kw in keywords)]
 
+    # 'us' too short for substring match — word boundary only
+    if not matched and re.search(r'\bus\b', query_lower):
+        matched = ['USA']
+
     return matched[0] if len(matched) == 1 else None
 
 
@@ -777,19 +781,7 @@ class DataCleaningConversation:
         return cleaned_id
 
     def handle_cleaning_request(self, user_query: str) -> str:
-        """Route cleaning request to the appropriate country-specific handler."""
-        country = detect_country_scope(user_query)
-        route_map = {
-            'CA': self.handle_canada_cleaning,
-            'USA': self.handle_usa_cleaning,
-            'NL': self.handle_europe_cleaning,
-            'MX': self.handle_mexico_cleaning,
-            'JP': self.handle_japan_cleaning,
-        }
-        if country and country in route_map:
-            print(f"  Routing to {country} handler...")
-            return route_map[country](user_query)
-        print("  No specific country detected — using generic workflow...")
+        """Run cleaning workflow; country scope auto-detected from fetched records."""
         return self._run_cleaning_workflow(user_query)
 
     def _run_cleaning_workflow(self, user_query: str, country_scope: str = None) -> str:
@@ -822,8 +814,33 @@ class DataCleaningConversation:
         records = agent.fetch_data_for_query(filters)
         step2_elapsed = time.time() - t
         if not records:
-            return "❌ No records found matching your query."
+            sample = get_all_raw_data(DB_PATH)[:50]
+            if not sample:
+                return "❌ No records in database. Add some data first."
+            from collections import Counter
+            groups = Counter(r.get('country', 'unknown') for r in sample)
+            options = ", ".join(f"{c} ({n})" for c, n in sorted(groups.items()))
+            return (
+                f"❌ No records matched '{user_query}'.\n"
+                f"Available data: {options}\n"
+                f"Try 'CLEAN all data' or be more specific (e.g. 'CLEAN Canadian data')."
+            )
         print(f"  ✅ {len(records)} records  ⏱️  {step2_elapsed:.2f}s\n")
+
+        # Auto-detect country scope from records if not passed explicitly
+        if not country_scope:
+            _NORMALIZE = {
+                'CA': 'CA', 'CANADA': 'CA',
+                'USA': 'USA', 'US': 'USA', 'UNITED STATES': 'USA', 'AMERICA': 'USA',
+                'NL': 'NL', 'NETHERLANDS': 'NL',
+                'MX': 'MX', 'MEXICO': 'MX',
+                'JP': 'JP', 'JAPAN': 'JP',
+            }
+            codes = {_NORMALIZE.get(r.get('country', '').strip().upper()) for r in records}
+            codes.discard(None)
+            if len(codes) == 1:
+                country_scope = codes.pop()
+                print(f"  Auto-detected country scope: {country_scope}\n")
 
         # Step 3: Deterministic pre-cleaning (Python only, no API call)
         print(f"{'='*80}")
