@@ -147,17 +147,19 @@ def test_sports_ticketing_pipeline_runs():
 
 
 def test_planner_real_estate_skills_not_in_sports():
-    """SkillPlanner for real_estate must not include sports_ticketing skills."""
+    """Domain registries must only contain their own domain-specific skills."""
     registry_re = SkillRegistry.load("real_estate")
     registry_st = SkillRegistry.load("sports_ticketing")
 
     re_skills = set(registry_re.list_skills())
     st_skills = set(registry_st.list_skills())
 
+    # real_estate must not include sports_ticketing domain skills
     assert "event_normalizer" not in re_skills
     assert "ticket_product_categorizer" not in re_skills
-    assert "spell_checker" not in st_skills
+    # sports_ticketing must not include real_estate domain skills
     assert "municipality_authority" not in st_skills
+    assert "geographic_validator" not in st_skills
 
 
 def test_sports_ticketing_pipeline_processes_all_samples():
@@ -165,7 +167,7 @@ def test_sports_ticketing_pipeline_processes_all_samples():
     registry = SkillRegistry.load("sports_ticketing")
     team = OrchestrationTeam(registry)
 
-    results = [team.process_record(dict(r)) for r in SPORTS_SAMPLES]
+    results = [team.process_record(dict(r))[0] for r in SPORTS_SAMPLES]
 
     # Event names should be normalized (aliases resolved)
     leafs_record = next(r for r in results if r.get("id") == 1)

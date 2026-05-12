@@ -61,6 +61,8 @@ List the rules as a numbered list. Focus on:
 3. Conditional rules (if X, then Y)
 4. Uncertainty rules (when NOT to change data)
 
+YOU MUST EXCLUDE ANY DETERMINISTIC / PIPELINE SPECIFIC RESULTS AND PROCESSES FROM TEST CASES, ONLY TEST THE PROMPT.
+
 Keep each rule to 1-2 sentences. Output ONLY the numbered list, no preamble."""
 
         system_param = build_system_param(self.backend, "You are a data cleaning expert. Extract rules precisely.")

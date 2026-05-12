@@ -40,75 +40,65 @@ class GeographicValidator(BaseSkill):
         Returns:
             Record with validation results
         """
-        decisions = []
-
         country = input_data.get("country", "CA").upper()
         province = input_data.get("state_province", "").upper()
         postal = input_data.get("postal_code", "").upper()
         municipality = input_data.get("municipality", "")
 
+        any_checks = False
+
         # Validate postal code format
         if postal:
+            any_checks = True
             is_valid_postal = self._validate_postal_format(postal, country)
             if not is_valid_postal:
-                decisions.append(
-                    self.log_decision(
-                        f"Invalid postal format: {postal} for country {country}",
-                        "Postal code doesn't match country format",
-                        confidence=1.0,
-                    )
+                self.log_decision(
+                    f"Invalid postal format: {postal} for country {country}",
+                    "Postal code doesn't match country format",
+                    confidence=1.0,
                 )
             else:
-                decisions.append(
-                    self.log_decision(
-                        f"Valid postal format: {postal}",
-                        f"Matches {country} postal code pattern",
-                        confidence=1.0,
-                    )
+                self.log_decision(
+                    f"Valid postal format: {postal}",
+                    f"Matches {country} postal code pattern",
+                    confidence=1.0,
                 )
 
         # Validate province exists
         if province and country in self.provinces:
+            any_checks = True
             valid_provinces = self.provinces[country]
             if province not in valid_provinces:
-                decisions.append(
-                    self.log_decision(
-                        f"Invalid province: {province} for country {country}",
-                        f"Not in list of valid provinces/states for {country}",
-                        confidence=1.0,
-                    )
+                self.log_decision(
+                    f"Invalid province: {province} for country {country}",
+                    f"Not in list of valid provinces/states for {country}",
+                    confidence=1.0,
                 )
             else:
-                decisions.append(
-                    self.log_decision(
-                        f"Valid province: {province}",
-                        f"Province code valid for {country}",
-                        confidence=1.0,
-                    )
+                self.log_decision(
+                    f"Valid province: {province}",
+                    f"Province code valid for {country}",
+                    confidence=1.0,
                 )
 
         # Check hierarchy consistency
         if country == "CA" and province == "ON" and municipality:
+            any_checks = True
             # Ontario-specific validation
             if municipality in ["Toronto", "Scarborough", "North York", "Etobicoke", "York", "East York"]:
-                decisions.append(
-                    self.log_decision(
-                        f"Consistent hierarchy: {municipality}, ON, Canada",
-                        "Municipality matches Ontario jurisdiction",
-                        confidence=0.95,
-                    )
+                self.log_decision(
+                    f"Consistent hierarchy: {municipality}, ON, Canada",
+                    "Municipality matches Ontario jurisdiction",
+                    confidence=0.95,
                 )
             else:
-                decisions.append(
-                    self.log_decision(
-                        f"Verify municipality: {municipality} in ON",
-                        "Check if municipality exists in Ontario",
-                        confidence=0.70,
-                    )
+                self.log_decision(
+                    f"Verify municipality: {municipality} in ON",
+                    "Check if municipality exists in Ontario",
+                    confidence=0.70,
                 )
 
-        if decisions:
-            input_data["_decisions"] = decisions
+        if any_checks:
             # Store validation summary
             input_data["_geographic_validated"] = True
 

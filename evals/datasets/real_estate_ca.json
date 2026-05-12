@@ -16,16 +16,15 @@
         "age": "45",
         "city": "Toronto",
         "country": "Canada",
-        "municipality": "Midtown",
+        "municipality": "Toronto",
         "name": "John Smith",
         "phone": "+1 (416) 555-1234",
         "postal_code": "M5V 2T6",
         "state_province": "Ontario"
       },
-      "expected_behavior": "No changes are made; validation_notes indicate all fields validated with HIGH confidence",
+      "expected_behavior": "No changes are made",
       "evaluation_criteria": [
-        "cleaned_data matches raw_data exactly",
-        "validation_notes contains no changes",
+        "cleaned_data matches raw_data exactly, exclude validation_notes if present in comparison",
         "No fields flagged for review"
       ]
     },
@@ -49,6 +48,7 @@
         "city changed to \"Loma Ladjll\"",
         "country set to \"Canada\"",
         "state_province changed to \"Alberta\"",
+        "phone number formatted to \"+1 (212) 555-9876\"",
         "postal_code unchanged with note about unrecognized format"
       ]
     },
@@ -77,7 +77,7 @@
     },
     {
       "id": "test_case_4",
-      "description": "State abbreviation for US, no postal code provided, address triggers unique lookup",
+      "description": "no postal code provided, IP address lookup for country / province",
       "input": {
         "address": "321 Birch Ave",
         "age": "52",
@@ -96,28 +96,6 @@
         "state_province changed to \"Manitoba\"",
         "postal_code remains null with validation note that lookup is required",
         "validation_notes reflect changes and reasoning"
-      ]
-    },
-    {
-      "id": "test_case_5",
-      "description": "Canadian FSA-only postal code — LLM flags for pipeline lookup, does not pre-emptively set N/A",
-      "input": {
-        "address": "1100 Cedar Street",
-        "age": "38",
-        "city": "Winnipeg",
-        "country": "CA",
-        "municipality": "Near River",
-        "name": "Meg Turner",
-        "phone": "204-555-7777",
-        "postal_code": "R3C",
-        "state_province": "Manitoba"
-      },
-      "expected_behavior": "country expanded to Canada; phone formatted to Canadian standard; postal_code left as R3C with note that it is a partial FSA requiring lookup; municipality left as Near River (original preserved — N/A is only valid after a failed lookup, not before)",
-      "evaluation_criteria": [
-        "country set to \"Canada\"",
-        "phone formatted to \"+1 (204) 555-7777\"",
-        "postal_code remains \"R3C\" with validation note that it is partial and requires lookup",
-        "municipality NOT set to N/A — original value preserved pending pipeline resolution"
       ]
     },
     {

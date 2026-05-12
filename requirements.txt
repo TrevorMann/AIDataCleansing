@@ -3,3 +3,5 @@ psycopg[binary]>=3.2
 requests>=2.32
 beautifulsoup4>=4.12
 pyshp>=2.3
+symspellpy>=6.7
+pydantic>=2.0

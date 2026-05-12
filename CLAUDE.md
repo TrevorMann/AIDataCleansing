@@ -171,6 +171,73 @@ skills/
     └── ticket_product_categorizer/
 ```
 
+## Prompt Architecture
+
+### Layers
+
+```
+<schema>                    ← input data (injected by assembler, NOT a rule)
+<general_rules>             ← prompts/base.py — behavior rules, always loaded
+<domain_rules domain="X" sub="Y">  ← prompts/domains/<domain>/<sub>.py — sub-category rules
+```
+
+`build_system_prompt(sub, schema, domain)` in `prompts/__init__.py` assembles all layers.
+`research.py` is a focused variant for the postal+municipality phase only (see below).
+
+### Sub-category file template
+
+Every sub-category file (e.g. `ca.py`, `usa.py`) must follow this XML structure:
+
+```
+<postal_code>     — format, NEVER-modify rule, mismatch flag, missing search strategy
+<state_province>  — full name required, valid values list
+<municipality>    — real-estate neighbourhood definition + examples + search strategy
+<phone>           — format, country code, leading-zero rule
+<formatting>      — Country: <full name>
+```
+
+CA additionally uses `<Postal Code Logic>`, `<Municipality Logic>`, `<Process>` for
+more complex multi-step logic. Other countries can adopt sub-sections when logic grows.
+
+### Separation of concerns
+
+| What | Where |
+|------|-------|
+| Behavior rules (how to process, when to flag, confidence scale) | `prompts/base.py` |
+| Format rules, valid values, country-specific constraints | `prompts/domains/<d>/<sub>.py` |
+| Static valid-value lists (state names, province names) | Sub-category file `<state_province>` |
+| Dynamic lookup data (FSA→municipality, spell corrections) | DB (seeded via `init_data.py`) |
+| Runtime infrastructure references (cache, DB tables) | Skills only — not in prompts |
+
+**Do not reference runtime infrastructure** (e.g. "check the FSA cache table") in prompts.
+Prompts describe what to verify; skills implement how to look it up.
+
+### research.py — focused research path
+
+`research.py` provides a stripped-down prompt for the postal+municipality phase only.
+Its country notes (`_CANADA_RESEARCH_NOTES` etc.) mirror rules in sub-category files.
+
+**Known limitation:** these notes are a manual copy — they will drift from the country files.
+When editing postal format or municipality logic in a country file, also update `research.py`.
+Long-term: consolidate by extracting `SHORT_RULES` from each country file.
+
+### Adding a new sub-category (e.g. new country)
+
+1. Create `prompts/domains/<domain>/<cc>.py` following the XML template above
+2. Import and register in `prompts/domains/<domain>/__init__.py`
+3. Add matching `_<CC>_RESEARCH_NOTES` block to `research.py`
+
+### Confidence scale (prompts ↔ triage routing)
+
+| Label  | Numeric | Triage route |
+|--------|---------|--------------|
+| HIGH   | ≥ 0.85  | `done` |
+| MEDIUM | 0.60–0.84 | `needs_review` |
+| LOW    | < 0.60  | `unsalvageable` |
+
+Prompts emit the label string. Triage skill reads numeric thresholds. The mapping is
+documented in `prompts/base.py` CONFIDENCE SCALE block — keep both in sync.
+
 ## Hardcoded Data Policy
 
 **No hardcoded data in skill source files.** All domain dictionaries live in DB:

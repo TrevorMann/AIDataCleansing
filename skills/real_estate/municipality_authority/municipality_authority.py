@@ -15,7 +15,6 @@ class MunicipalityAuthorityAgent(BaseSkill):
         self.conn = self.config.get("pg_conn")
 
     def run(self, input_data: Dict[str, Any], tools: Dict[str, Any] = None) -> Dict[str, Any]:
-        decisions = []
         postal_code = input_data.get("postal_code", "")
         upstream = input_data.get("municipality", "")
 
@@ -43,38 +42,36 @@ class MunicipalityAuthorityAgent(BaseSkill):
                 if resolved:
                     input_data["municipality"] = resolved
                     input_data["_municipality_confidence"] = confidence
-                    decisions.append(self.log_decision(
+                    self.log_decision(
                         f"Resolved municipality: {resolved} (via DB, status={status})",
                         f"MunicipalityResolver confidence={confidence:.2f}",
                         confidence=confidence,
-                    ))
+                    )
                 else:
                     # DB miss — flag for web search enrichment
                     fsa = postal_code[:3].upper().replace(" ", "")
                     input_data["_unknown_fsa"] = fsa
                     input_data["_municipality_confidence"] = 0.0
-                    decisions.append(self.log_decision(
+                    self.log_decision(
                         f"Unknown FSA: {fsa}",
                         "MunicipalityResolver returned no result — needs web_search enrichment",
                         confidence=0.0,
-                    ))
+                    )
             except Exception as e:
                 # DB unavailable — flag and continue
                 input_data["_municipality_confidence"] = 0.0
-                decisions.append(self.log_decision(
+                self.log_decision(
                     "Municipality resolution failed",
                     f"DB error: {str(e)[:100]}",
                     confidence=0.0,
-                ))
+                )
         else:
             # No conn — warn and flag
             input_data["_municipality_confidence"] = 0.0
-            decisions.append(self.log_decision(
+            self.log_decision(
                 "Municipality resolution skipped",
                 "No pg_conn configured — run init_data.py to seed DB",
                 confidence=0.0,
-            ))
+            )
 
-        if decisions:
-            input_data.setdefault("_decisions", []).extend(decisions)
         return input_data

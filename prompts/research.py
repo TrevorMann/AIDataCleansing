@@ -1,8 +1,16 @@
 """
-Focused research prompts for the postal code + municipality lookup step.
+Focused research prompt for the postal code + municipality lookup phase.
 Names, phones, countries, and states are already cleaned before Claude sees the data.
 Claude's only job here is web research.
+
+Country-specific SHORT_RULES are imported from each sub-category file — single source of truth.
 """
+
+from prompts.domains.real_estate.ca import SHORT_RULES as _CA
+from prompts.domains.real_estate.usa import SHORT_RULES as _USA
+from prompts.domains.real_estate.nl import SHORT_RULES as _NL
+from prompts.domains.real_estate.mx import SHORT_RULES as _MX
+from prompts.domains.real_estate.jp import SHORT_RULES as _JP
 
 _BASE_RESEARCH = """You are a data researcher. For each record below, do TWO things only:
 1. Verify or complete the postal code (if missing or incomplete)
@@ -26,44 +34,12 @@ Rules:
 DATA TO RESEARCH:
 """
 
-_CANADA_RESEARCH_NOTES = """
-Canada-specific rules:
-- Postal format: A1A 1A1 (include space). FSA only (3 chars) must be completed via web search.
-- Cross-province check: first letter encodes province (V=BC, M/K/L/N/P=ON, H/J/G=QC, T=AB, etc.)
-  If the postal first letter doesn't match the province, flag as CROSS-PROVINCE MISMATCH.
-- Municipality: real estate neighbourhood (e.g. "The Annex" not "Toronto", "Plateau" not "Montreal")
-"""
-
-_USA_RESEARCH_NOTES = """
-USA-specific rules:
-- Postal (ZIP) format: XXXXX or XXXXX-XXXX. Never modify a full ZIP — only complete missing ones.
-- Municipality: real estate neighbourhood (e.g. "Upper East Side" not "New York City")
-"""
-
-_NL_RESEARCH_NOTES = """
-Netherlands-specific rules:
-- Postal format: XXXX XX (4 digits, space, 2 letters). If incomplete, find via web search.
-- Municipality: use the official gemeente name (e.g. "Amsterdam", "Rotterdam-Centrum")
-"""
-
-_MX_RESEARCH_NOTES = """
-Mexico-specific rules:
-- Postal format: 5-digit numeric (XXXXX). If missing, find via web search.
-- Municipality: use the colonia (neighbourhood) name used in real estate listings (e.g. "Polanco", "Roma Norte")
-"""
-
-_JP_RESEARCH_NOTES = """
-Japan-specific rules:
-- Postal format: XXX-XXXX. If missing, find via web search (results may be less reliable — flag as LOW confidence if uncertain).
-- Municipality: use the ward (ku) or district name (e.g. "Shinjuku-ku", "Namba")
-"""
-
-_COUNTRY_NOTES = {
-    'CA': _CANADA_RESEARCH_NOTES,
-    'USA': _USA_RESEARCH_NOTES,
-    'NL': _NL_RESEARCH_NOTES,
-    'MX': _MX_RESEARCH_NOTES,
-    'JP': _JP_RESEARCH_NOTES,
+_COUNTRY_NOTES: dict[str, str] = {
+    "CA": _CA,
+    "USA": _USA,
+    "NL": _NL,
+    "MX": _MX,
+    "JP": _JP,
 }
 
 

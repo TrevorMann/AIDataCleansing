@@ -2,15 +2,46 @@ domain: sports_ticketing
 version: 0.1
 
 config:
-  fuzzy_match_threshold: 0.85
+  spell_check_threshold: 0.85
 
 skills:
+  spell_checker:
+    class: skills._common.spell_checker.spell_checker.SpellChecker
+    skill_doc: skills/_common/spell_checker/skill.md
+    tools: []
+    config:
+      text_fields: [event_description, venue_notes]
+      threshold: 0.85
+      domain: sports_ticketing
+    cost: low
+    phase: 1
+    latency_estimate_ms: 100
+    depends_on: []
+
+  record_linker:
+    class: skills._common.record_linker.record_linker.RecordLinker
+    skill_doc: skills/_common/record_linker/skill.md
+    tools: []
+    config:
+      blocking_fields: [event_date]
+      match_rules:
+        - name: venue_team_date
+          fields: [venue_name, home_team, event_date]
+          match_type: fuzzy
+          threshold: 0.85
+          weight: 0.90
+    cost: low
+    phase: 1
+    latency_estimate_ms: 150
+    depends_on: []
+
   event_normalizer:
     class: skills.sports_ticketing.event_normalizer.event_normalizer.EventNormalizer
     tools: []
     config:
       pg_conn: "${runtime.pg_conn}"
     cost: low
+    phase: 2
     latency_estimate_ms: 50
     depends_on: []
 
@@ -19,5 +50,6 @@ skills:
     tools: []
     config: {}
     cost: low
+    phase: 2
     latency_estimate_ms: 20
     depends_on: []

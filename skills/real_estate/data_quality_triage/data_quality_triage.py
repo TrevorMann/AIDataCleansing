@@ -26,12 +26,11 @@ class DataQualityTriageAgent(BaseSkill):
         # Evaluate data completeness and confidence
         completeness = self._evaluate_completeness(input_data)
         confidence = self._evaluate_confidence(input_data)
-        corrections = len(input_data.get("_agent_decisions", []))
 
         # Route decision
-        triage_result = self._make_triage_decision(completeness, confidence, corrections)
+        triage_result = self._make_triage_decision(completeness, confidence)
 
-        decision_log = self.log_decision(
+        self.log_decision(
             f"Triage: {triage_result['route']} "
             f"(completeness: {completeness:.2f}, confidence: {confidence:.2f})",
             triage_result["reason"],
@@ -42,10 +41,6 @@ class DataQualityTriageAgent(BaseSkill):
         input_data["_triage_confidence"] = triage_result["confidence"]
         input_data["_triage_completeness"] = completeness
         input_data["_triage_data_confidence"] = confidence
-
-        if "_decisions" not in input_data:
-            input_data["_decisions"] = []
-        input_data["_decisions"].append(decision_log)
 
         return input_data
 
@@ -77,15 +72,8 @@ class DataQualityTriageAgent(BaseSkill):
         if "_municipality_confidence" in record:
             scores.append(record["_municipality_confidence"])
 
-        # Address standardization (proxy: if spell checking happened)
-        decisions = record.get("_agent_decisions", [])
-        if decisions:
-            # More corrections → lower confidence
-            correction_count = len([d for d in decisions if "Correct" in d.get("decision", "")])
-            scores.append(max(0.5, 1.0 - (correction_count * 0.1)))
-        else:
-            # No corrections = good sign
-            scores.append(0.9)
+        # Baseline confidence when no explicit correction signals available
+        scores.append(0.9)
 
         # Geographic validation
         if record.get("_geographic_validated"):
@@ -94,13 +82,12 @@ class DataQualityTriageAgent(BaseSkill):
         # Weakest-link: min of all signals
         return min(scores) if scores else 0.5
 
-    def _make_triage_decision(self, completeness: float, confidence: float, corrections: int) -> Dict:
+    def _make_triage_decision(self, completeness: float, confidence: float) -> Dict:
         """Make routing decision.
 
         Args:
             completeness: Completeness score (0.0-1.0)
             confidence: Confidence score (0.0-1.0)
-            corrections: Number of corrections made
 
         Returns:
             Decision dict with route, reason, and confidence

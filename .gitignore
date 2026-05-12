@@ -4,6 +4,7 @@
 # Python
 venv/
 .venv-win/
+evals/
 __pycache__/
 *.pyc
 *.pyo
@@ -27,6 +28,10 @@ debug_output.txt
 # OS
 .DS_Store
 Thumbs.db
+
+#Plans
+docs/plans/*.md
+docs/superpowers/*.md
 
 # Git worktrees
 

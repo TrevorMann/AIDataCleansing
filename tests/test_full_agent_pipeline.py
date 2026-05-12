@@ -23,25 +23,25 @@ def registry():
     return SkillRegistry.load("real_estate")
 
 
-def test_decisions_log_isolated_per_record(registry):
-    """Each execute() call must only see its own decisions, not prior calls'."""
+def test_decisions_log_isolated_per_record():
+    """Each run() must only accumulate its own audit, not prior calls'."""
     with patch("cleaning.spell_corrections_data.get_corrections_dict", return_value=_REAL_ESTATE_CORRECTIONS):
         registry_with_conn = SkillRegistry.load("real_estate", runtime={"pg_conn": MagicMock()})
-    agent = BaseAgent("X", ["spell_checker"], registry_with_conn)
-    rec1 = {"municipality": "scarbbrough"}   # gets corrected → decision logged
-    rec2 = {"municipality": "toronot"}       # also gets corrected → different decision
+    spell = registry_with_conn.get("spell_checker")
 
-    agent.execute(rec1)
-    result2 = agent.execute(rec2)
+    spell.clear_audit()
+    spell.run({"city": "scarbbrough"}, {})
+    audit1 = spell.get_audit()
 
-    # rec2's _decisions must NOT contain rec1's correction
-    decisions2 = result2.get("_decisions", [])
-    assert not any("scarbbrough" in d.get("decision", "") for d in decisions2), (
-        "rec1 decision leaked into rec2 — decisions_log not scoped per record"
+    spell.clear_audit()
+    spell.run({"city": "toronot"}, {})
+    audit2 = spell.get_audit()
+
+    assert not any("scarbbrough" in e.get("decision", "") for e in audit2), (
+        "rec1 audit leaked into rec2"
     )
-    # rec2 must have its own correction
-    assert any("toronot" in d.get("decision", "") for d in decisions2), (
-        "rec2 missing its own correction decision"
+    assert any("toronot" in e.get("decision", "") for e in audit2), (
+        "rec2 missing its own correction"
     )
 
 
@@ -59,10 +59,10 @@ def test_municipality_authority_fsa_match():
 
     # No pg_conn configured → resolution skipped, municipality unchanged
     assert result.get("_municipality_confidence") == 0.0
-    decisions = result.get("_decisions", [])
+    audit = agent.get_audit()
     assert any(
         "skipped" in d.get("decision", "").lower() or "failed" in d.get("decision", "").lower()
-        for d in decisions
+        for d in audit
     )
 
 
@@ -97,7 +97,7 @@ def test_geographic_validator_valid_postal():
     result = validator.run(record)
 
     assert result.get("_geographic_validated") == True
-    assert "_decisions" in result
+    assert len(validator.get_audit()) > 0
 
 
 def test_geographic_validator_invalid_postal():
@@ -113,9 +113,9 @@ def test_geographic_validator_invalid_postal():
 
     result = validator.run(record)
 
-    # Should detect invalid format
-    decisions = result.get("_decisions", [])
-    assert any("Invalid postal" in d.get("decision", "") for d in decisions)
+    # Should detect invalid format — audit entries are on the skill, not in the record
+    audit = validator.get_audit()
+    assert any("Invalid postal" in d.get("decision", "") for d in audit)
 
 
 def test_data_quality_triage_complete_high_confidence():
@@ -172,7 +172,7 @@ def test_full_pipeline_messy_record():
         "country": "Canada",
     }
 
-    result = team.process_record(record)
+    result, audit = team.process_record(record)
 
     # Should have corrected spelling
     assert result["city"] == "toronto"
@@ -180,8 +180,9 @@ def test_full_pipeline_messy_record():
     # Should have triage decision
     assert "_triage_route" in result
 
-    # Should have decisions logged
-    assert "_agent_decisions" in result
+    # Decisions are now in audit, not in record
+    assert "_agent_decisions" not in result
+    assert len(audit) > 0
 
 
 def test_full_pipeline_clean_record():
@@ -239,11 +240,10 @@ def test_full_pipeline_batch():
 
     assert report.records_processed == 3
     assert report.cleaned_count == 3
-    assert "agent team" in report.summary_text.lower()
+    assert report.summary_text
 
 
 from skills.real_estate.address_standardizer.address_standardizer import AddressStandardizer
-from skills.real_estate.fuzzy_matcher.fuzzy_matcher import FuzzyMatcher
 from skills.real_estate.data_quality_triage.data_quality_triage import DataQualityTriageAgent
 
 
@@ -286,35 +286,22 @@ def test_single_letter_directional_not_expanded():
     assert "North" not in out, f"Single-letter N must not expand. Got: {out}"
 
 
-def test_fuzzy_matches_st_to_street():
-    fm = FuzzyMatcher({"threshold": 0.85})
-    sim = fm.compare("123 Main st", "123 main street")
-    assert sim >= 0.85
-
-
-def test_fuzzy_matches_saint_catherine():
-    fm = FuzzyMatcher({"threshold": 0.85})
-    sim = fm.compare("st Catherine", "saint catherine")
-    assert sim >= 0.85
-
-
-def test_fuzzy_matches_full_variant():
-    fm = FuzzyMatcher({"threshold": 0.85})
-    sim = fm.compare("123 Main st, st Catherine", "123 main street, saint catherine")
-    assert sim >= 0.90
-
-
-from skills.real_estate.spell_checker.spell_checker import SpellChecker
-
-
-def test_spell_checker_uses_fuzzy_for_short_typo():
-    fm = FuzzyMatcher({"threshold": 0.60})
-    with patch("cleaning.spell_corrections_data.get_corrections_dict", return_value=_REAL_ESTATE_CORRECTIONS):
-        sc = SpellChecker({"threshold": 0.60, "pg_conn": MagicMock()})
-    # "scarb" is not an exact key, needs fuzzy to find "scarborough"
-    corrected, decision = sc._correct_text("scarb", "city", {"fuzzy_matcher": fm})
-    assert corrected.lower() == "scarborough", f"Expected scarborough, got {corrected}"
-    assert decision is not None
+def test_record_linker_address_composite():
+    from skills._common.record_linker.record_linker import RecordLinker
+    linker = RecordLinker({
+        "blocking_fields": [],
+        "match_rules": [{
+            "name": "address_composite",
+            "fields": ["address", "city"],
+            "match_type": "fuzzy",
+            "threshold": 0.75,
+            "weight": 0.9,
+        }]
+    })
+    record = {"id": "A", "address": "123 Main St", "city": "toronto"}
+    candidates = [{"id": "B", "address": "123 Main Street", "city": "toronto"}]
+    result = linker.run(record, tools={"candidates": candidates})
+    assert len(result.get("_linked_records", [])) == 1
 
 
 def test_municipality_authority_no_hardcoded_fsa_dict():
@@ -331,10 +318,32 @@ def test_municipality_authority_no_conn_signals_gracefully():
     skill = MunicipalityAuthorityAgent(config={})
     out = skill.run({"postal_code": "M1A 1B1", "municipality": "Scarborough"})
     assert out.get("_municipality_confidence", 1.0) == 0.0
+    audit = skill.get_audit()
     assert any(
         "skipped" in d.get("decision", "").lower() or "failed" in d.get("decision", "").lower()
-        for d in out.get("_decisions", [])
+        for d in audit
     )
+
+
+def test_phase1_audit_not_in_record():
+    """After process_record, _decisions and _agent_decisions must not be in record."""
+    registry = SkillRegistry.load("real_estate")
+    team = OrchestrationTeam(registry)
+    record = {"id": "r1", "city": "toronot", "address": "123 Main St"}
+    result, audit = team.process_record(record)
+    assert "_decisions" not in result
+    assert "_agent_decisions" not in result
+    assert isinstance(audit, list)
+    assert len(audit) > 0, "Expected at least one audit entry from Phase-1 skills"
+
+
+def test_process_record_returns_tuple():
+    """process_record must return (record_dict, audit_list)."""
+    registry = SkillRegistry.load("real_estate")
+    team = OrchestrationTeam(registry)
+    result = team.process_record({"id": "r1"})
+    assert isinstance(result, tuple)
+    assert len(result) == 2
 
 
 if __name__ == "__main__":

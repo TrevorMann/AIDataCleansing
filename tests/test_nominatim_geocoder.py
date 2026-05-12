@@ -44,7 +44,7 @@ def test_geocode_success_no_cache():
     assert result["_geocode_lat"] == 43.7234
     assert result["_geocode_lon"] == -79.5432
     assert result["_geocode_confidence"] == 0.90  # city "north york" in display
-    assert "_decisions" in result
+    assert len(sc.get_audit()) > 0
 
 
 def test_geocode_city_not_in_display_lower_confidence():
@@ -73,7 +73,7 @@ def test_geocode_no_results():
         })
     assert result["_geocode_validated"] is False
     assert result["_geocode_confidence"] == 0.0
-    assert "_decisions" in result
+    assert len(sc.get_audit()) > 0
 
 
 # --- HTTP error ---

@@ -5,6 +5,16 @@ import json
 from typing import Any, Dict, Optional
 from skills.base import BaseSkill
 
+# Full country name → ISO 3166-1 alpha-2 (lowercase) for Nominatim countrycodes param
+_COUNTRY_TO_ISO2: dict[str, str] = {
+    "canada": "ca",
+    "united states": "us",
+    "usa": "us",
+    "netherlands": "nl",
+    "mexico": "mx",
+    "japan": "jp",
+}
+
 
 class NominatimGeocoderSkill(BaseSkill):
     """Validate addresses via Nominatim reverse-geocoding. PG-cached."""
@@ -13,7 +23,7 @@ class NominatimGeocoderSkill(BaseSkill):
         super().__init__(config)
         self.domain = "real_estate"
         self.rate_limit = self.config.get("rate_limit", 1)
-        self.countrycodes = self.config.get("countrycodes", "ca")
+        self._countrycodes_fallback = self.config.get("countrycodes", "")
         self.cache_ttl_days = self.config.get("cache_ttl_days", 30)
         self.conn = self.config.get("pg_conn")
         self._client = None
@@ -24,8 +34,13 @@ class NominatimGeocoderSkill(BaseSkill):
             self._client = NominatimClient(rate_limit_per_sec=self.rate_limit)
         return self._client
 
-    def _cache_key(self, street, city, postal, country) -> str:
-        raw = f"{street}|{city}|{postal}|{country}|{self.countrycodes}"
+    def _resolve_countrycodes(self, country: str) -> str:
+        """Derive ISO 3166-1 alpha-2 from the record's country field. Falls back to config."""
+        iso = _COUNTRY_TO_ISO2.get(country.lower().strip(), "")
+        return iso or self._countrycodes_fallback
+
+    def _cache_key(self, street, city, postal, country, countrycodes) -> str:
+        raw = f"{street}|{city}|{postal}|{country}|{countrycodes}"
         return hashlib.sha256(raw.encode()).hexdigest()[:32]
 
     def _cache_get(self, key: str) -> Optional[list]:
@@ -69,12 +84,13 @@ class NominatimGeocoderSkill(BaseSkill):
         street = input_data.get("address", "")
         city = input_data.get("city", "")
         postal = input_data.get("postal_code", "")
-        country = input_data.get("country", "Canada")
+        country = input_data.get("country", "")
+        countrycodes = self._resolve_countrycodes(country)
 
         if not street and not postal:
             return input_data
 
-        cache_key = self._cache_key(street, city, postal, country)
+        cache_key = self._cache_key(street, city, postal, country, countrycodes)
         results = self._cache_get(cache_key)
 
         if results is None:
@@ -85,30 +101,26 @@ class NominatimGeocoderSkill(BaseSkill):
                     city=city,
                     postalcode=postal,
                     country=country,
-                    countrycodes=self.countrycodes,
+                    countrycodes=countrycodes,
                 ) or []
                 self._cache_set(cache_key, results)
             except Exception as e:
                 input_data["_geocode_confidence"] = 0.0
                 input_data["_geocode_validated"] = False
-                input_data.setdefault("_decisions", []).append(
-                    self.log_decision(
-                        "Geocoding failed",
-                        f"Nominatim error: {str(e)[:80]}",
-                        confidence=0.0,
-                    )
+                self.log_decision(
+                    "Geocoding failed",
+                    f"Nominatim error: {str(e)[:80]}",
+                    confidence=0.0,
                 )
                 return input_data
 
         if not results:
             input_data["_geocode_confidence"] = 0.0
             input_data["_geocode_validated"] = False
-            input_data.setdefault("_decisions", []).append(
-                self.log_decision(
-                    "Address not found in Nominatim",
-                    f"No results for: {street}, {city}, {postal}",
-                    confidence=0.0,
-                )
+            self.log_decision(
+                "Address not found in Nominatim",
+                f"No results for: {street}, {city}, {postal}",
+                confidence=0.0,
             )
             return input_data
 
@@ -127,11 +139,9 @@ class NominatimGeocoderSkill(BaseSkill):
         input_data["_geocode_confidence"] = confidence
         input_data["_geocode_validated"] = True
 
-        input_data.setdefault("_decisions", []).append(
-            self.log_decision(
-                f"Geocoded: ({lat:.4f}, {lon:.4f})",
-                f"Nominatim: {display[:80]}",
-                confidence=confidence,
-            )
+        self.log_decision(
+            f"Geocoded: ({lat:.4f}, {lon:.4f})",
+            f"Nominatim: {display[:80]}",
+            confidence=confidence,
         )
         return input_data

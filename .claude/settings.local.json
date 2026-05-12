@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest tests/test_schema_discovery.py -v)",
+      "Bash(python3 -m pytest tests/test_schema_discovery.py -v)",
+      "Bash(pip3 install *)",
+      "Bash(python3 *)",
+      "Bash(/usr/bin/python3 *)",
+      "WebFetch(domain:openrouter.ai)",
+      "Bash(venv/bin/python3 *)",
+      "Bash(git add *)",
+      "Bash(git *)",
+      "Bash(pip show *)",
+      "Bash(pip list *)",
+      "Bash(python *)",
+      "Bash(grep -E \"\\\\.\\(py|sql\\)$\")",
+      "Bash(.venv-win/Scripts/python.exe *)",
+      "Bash(.venv-win/Scripts/pip.exe install *)",
+      "Bash(mkdir -p /mnt/f/AI_learning_project/.claude/skills/backend-schema-translator)",
+      "Bash(cp /home/hello/.claude/skills/backend-schema-translator/SKILL.md /mnt/f/AI_learning_project/.claude/skills/backend-schema-translator/SKILL.md)",
+      "Bash(rm -rf /home/hello/.claude/skills/backend-schema-translator)",
+      "Bash(/mnt/f/AI_learning_project/.venv-win/Scripts/python.exe -m pytest tests/ -q --ignore=tests/test_schema_discovery.py)",
+      "Bash(/mnt/f/AI_learning_project/.venv-win/Scripts/python.exe -m pytest tests/test_skill_registry.py tests/test_full_agent_pipeline.py tests/cleaning/test_spell_corrections.py tests/test_multi_domain.py -v)",
+      "Bash(/mnt/f/AI_learning_project/.venv-win/Scripts/python.exe --version)",
+      "Bash(/mnt/f/AI_learning_project/.venv-win/Scripts/python.exe -c \"import symspellpy; print\\('symspellpy ok'\\)\")",
+      "Bash(/mnt/f/AI_learning_project/.venv-win/Scripts/python.exe *)"
+    ]
+  }
+}

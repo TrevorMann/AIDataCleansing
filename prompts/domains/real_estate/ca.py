@@ -1,6 +1,24 @@
+SHORT_RULES = """
+Canada-specific rules:
+- Postal format: A1A 1A1 (include space). FSA only (3 chars) must be completed via web search.
+- Cross-province check: first letter encodes province (V=BC, M/K/L/N/P=ON, H/J/G=QC, T=AB, etc.)
+  If the postal first letter doesn't match the province, flag as CROSS-PROVINCE MISMATCH.
+- Municipality: real estate neighbourhood (e.g. "The Annex" not "Toronto", "Plateau" not "Montreal")
+"""
+
 RULES = """
 REAL ESTATE — CANADA:
 
+Canada General Rules:
+
+- Data must be from Canada, if not flag as not Canadian and skip. 
+- Canadian data must follow Canadian formats and rules. If you can't confirm it's Canadian, do not apply these rules.
+- Authoritative sources are:
+  - Canada Post for postal code validation and lookup.
+  - Geo coordinate bounds and look up. 
+  - FSA + municipality mapping tables.
+
+<Postal Code Logic>
 STEP 0 — CROSS-PROVINCE SANITY CHECK (run before any web search):
 Canadian postal codes encode province in the first letter. Check this BEFORE anything else:
   A = Newfoundland & Labrador | B = Nova Scotia | C = Prince Edward Island
@@ -21,33 +39,41 @@ POSTAL CODE CLASSIFICATION (determine type before any action):
 
   PARTIAL postal code / FSA only (3 characters, e.g. M6H, V6B):
   - INCOMPLETE data — must be resolved.
-  - Web search "[street address] [FSA] [city]" to find the full postal code.
+  - Check FSA mapping cache for possible matches for municipality, if you find more than one verify with geobounds.
   - CRITICAL: The same street name can exist in multiple FSA areas (e.g. Muir Avenue exists
     under M6H AND M9L — different streets in different neighbourhoods). Confirm the specific
     address before setting municipality or full code.
+  - Web search "[street address] [FSA] [city]" to find the full postal code.
   - One confident match: complete the code, note "FSA [X] completed to [full code] via web search. Confidence: HIGH."
-  - Ambiguous or multiple matches: set postal code to FSA + "?" (e.g. "M6H ?"),
-    set municipality to 'N/A', flag "FSA AMBIGUOUS: multiple addresses found — requires manual review."
-  - Never guess the full code without a confirmed web result.
+  - Never guess the full postal code.
 
   Missing postal code:
   - Web search "[street address] [city] [province] postal code".
-  - Only populate if search returns a single confident result; otherwise 'N/A'.
+  - Only populate if search returns a single confident result.
+
+</Postal Code Logic>
+
+<Municipality Logic>
 
 MUNICIPALITY — REAL ESTATE NEIGHBOURHOOD:
-Municipality MUST be the neighbourhood people search when looking for properties.
+Municipality MUST be the name people search when looking for real-estate listings, which are generally neighborhoods for non-amalgamated (combined) cities or the original pre-amalgamation historical name.
 This differs from administrative boundaries (e.g. "The Annex" not "Toronto", "Little Italy" not "Dufferin",
 "North York" not "City of Toronto", "Plateau-Mont-Royal" not "Montreal").
+
+</Municipality Logic>
+
+<Process>
 
 Process — follow in order:
 1. Run cross-province check (Step 0) first. If flagged, set municipality to 'N/A' and skip remaining.
 2. Determine postal code state (full / partial / missing) per rules above.
-3. Full postal code: web search "[full postal code] real estate neighbourhood" to confirm municipality.
-4. Partial FSA: web search "[address] [FSA] [city]" — resolve full postal code first, then municipality.
+3. Search Cache tables such as FSA and geo bounds mapping for find Municipality matches.
+4. Full postal code: web search "[full postal code] real estate neighbourhood" to confirm municipality.
+5. Partial FSA: web search "[address] [FSA] [city]" — resolve full postal code first, then municipality.
    Same address name in different FSA zones = different streets, different neighbourhoods.
-5. Missing postal code: web search "[address] [city] [province]" — resolve postal code first.
-6. Final cross-check: City + Address + Postal Code + Municipality must all align.
-   Record confidence score (HIGH / MEDIUM / LOW) in validation notes.
+6. Missing postal code: web search "[address] [city] [province]" — resolve postal code first.
+7. Final cross-check: City + Address + Postal Code + Municipality must all align.
+   Record confidence score (HIGH ≥ 0.85 / MEDIUM 0.60–0.84 / LOW < 0.60) in validation notes.
    Flag any inconsistency even if unresolvable.
 
 When unable to determine a value:
@@ -57,8 +83,14 @@ When unable to determine a value:
 
 CRITICAL: NEVER change a full postal code. Update surrounding fields to align with it.
 
+</Process>
+
+<Canadian Formatting>
+
 Postal format: A1A 1A1
 Phone format: +1 (123) 456-7890
 Province: full name (Ontario, British Columbia, Quebec, Alberta, etc.)
 Country: Canada
+
+</Canadian Formatting>
 """

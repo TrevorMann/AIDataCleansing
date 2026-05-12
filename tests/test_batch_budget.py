@@ -74,10 +74,10 @@ def test_orchestration_team_exits_early_on_done():
         "state_province": "ON",
         "country": "Canada",
     }
-    result = team.process_record(record)
+    result, audit = team.process_record(record)
     # web_search_enricher should NOT appear in decisions for a "done" record
     # (it's gated by triage route)
-    assert "skill_planner" not in result.get("_agent_decisions", [])
+    assert not any(e.get("skill") == "skill_planner" for e in audit)
 
 
 def test_orchestration_team_returns_triage_route():
@@ -92,7 +92,7 @@ def test_orchestration_team_returns_triage_route():
         "state_province": "ON",
         "country": "Canada",
     }
-    result = team.process_record(record)
+    result, audit = team.process_record(record)
     assert "_triage_route" in result
     assert result["_triage_route"] in ("done", "needs_review", "unsalvageable")
 
@@ -103,7 +103,7 @@ def test_orchestration_team_unsalvageable_exits_early():
     team = OrchestrationTeam(registry)
     # Minimal record with missing critical fields
     record = {"address": "incomplete"}
-    result = team.process_record(record)
+    result, audit = team.process_record(record)
     # Should have triage route but no planning decisions
     assert "_triage_route" in result
 

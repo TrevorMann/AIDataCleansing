@@ -3,8 +3,10 @@ System prompt assembler.
 
 build_system_prompt(sub, schema, domain) returns a structured prompt:
 
-    <general_rules>          ← BASE_RULES, always loaded
-      <schema>...</schema>   ← DB schema injected here
+    <schema>                    ← input data schema (injected only when provided)
+    </schema>
+
+    <general_rules>             ← BASE_RULES, always loaded
       GENERAL RULES...
     </general_rules>
 
@@ -12,8 +14,8 @@ build_system_prompt(sub, schema, domain) returns a structured prompt:
       ...domain/sub-specific rules...
     </domain_rules>
 
-XML tags help the model distinguish which rules are universal vs. domain-specific,
-and clearly bound where each layer starts and ends.
+Schema is a sibling tag, NOT nested inside general_rules — it is input data, not a rule.
+XML tags help the model distinguish data schema from universal rules from domain-specific rules.
 
 Layers loaded:
   base     = prompts/base.py               (always)
@@ -50,7 +52,7 @@ def build_system_prompt(sub: str | None = None, schema: str = "", domain: str | 
     sub    : Sub-category key — country code (CA/USA/NL/...) for real_estate,
              platform name (ticketmaster/axs) for sports_ticketing, etc.
              Pass None to get domain-level rules only (no sub-category layer).
-    schema : DB schema string injected into the base prompt.
+    schema : DB schema string — emitted as a top-level <schema> block before rules.
     domain : Override active domain. Defaults to data/domain_registry.json active_domain.
 
     Returns
@@ -58,16 +60,20 @@ def build_system_prompt(sub: str | None = None, schema: str = "", domain: str | 
     str — structured prompt with XML-tagged layers.
     """
     domain = domain or get_active_domain() or ""
-    schema_block = f"\nDatabase schema:\n{schema}\n" if schema else ""
-    base = BASE_RULES.format(schema=schema_block)
 
     mod = _load_domain_module(domain)
     domain_prompt = mod.get_prompt(sub) if mod and hasattr(mod, "get_prompt") else ""
 
-    # Wrap base rules
-    parts = [f"<general_rules>\n{base.strip()}\n</general_rules>"]
+    parts = []
 
-    # Wrap domain rules — tag carries domain + sub so model knows context
+    # Schema block first — input data, not a rule
+    if schema.strip():
+        parts.append(f"<schema>\n{schema.strip()}\n</schema>")
+
+    # General rules
+    parts.append(f"<general_rules>\n{BASE_RULES.strip()}\n</general_rules>")
+
+    # Domain + sub rules
     if domain_prompt.strip():
         sub_attr = f' sub="{sub}"' if sub else ""
         parts.append(

@@ -2,7 +2,6 @@ domain: real_estate
 version: 1.0
 
 config:
-  # Global defaults for real_estate domain
   spell_check_threshold: 0.85
   fuzzy_match_threshold: 0.90
   nominatim_rate_limit: 1
@@ -10,42 +9,49 @@ config:
 
 skills:
   spell_checker:
-    class: skills.real_estate.spell_checker.spell_checker.SpellChecker
-    skill_doc: skills/real_estate/spell_checker/skill.md
-    tools:
-      - spell_check_dictionary
-      - fuzzy_matcher
+    class: skills._common.spell_checker.spell_checker.SpellChecker
+    skill_doc: skills/_common/spell_checker/skill.md
+    tools: []
     config:
+      text_fields: [city, municipality, description]
       threshold: 0.85
-      domain_dictionary: real_estate
+      domain: real_estate
       pg_conn: "${runtime.pg_conn}"
     cost: low
+    phase: 1
     latency_estimate_ms: 100
     depends_on: []
 
   address_standardizer:
-    class: skills.real_estate.address_standardizer.address_standardizer.AddressStandardizer
-    skill_doc: skills/real_estate/address_standardizer/skill.md
-    tools:
-      - standardize_address
-      - expand_abbreviations
+    class: skills._common.address_standardizer.address_standardizer.AddressStandardizer
+    skill_doc: skills/_common/address_standardizer/skill.md
+    tools: []
     config:
+      address_fields: [address]
       strip_unit_numbers: false
-      expand_directionals: true
     cost: low
+    phase: 1
     latency_estimate_ms: 50
     depends_on: []
 
-  fuzzy_matcher:
-    class: skills.real_estate.fuzzy_matcher.fuzzy_matcher.FuzzyMatcher
-    skill_doc: skills/real_estate/fuzzy_matcher/skill.md
-    tools:
-      - levenshtein_distance
-      - token_matcher
+  record_linker:
+    class: skills._common.record_linker.record_linker.RecordLinker
+    skill_doc: skills/_common/record_linker/skill.md
+    tools: []
     config:
-      threshold: 0.90
-      token_weight: 0.5
+      blocking_fields: [postal_code]
+      match_rules:
+        - name: email_exact
+          fields: [email]
+          match_type: exact
+          weight: 1.0
+        - name: address_composite
+          fields: [address, city, postal_code]
+          match_type: fuzzy
+          threshold: 0.90
+          weight: 0.80
     cost: low
+    phase: 1
     latency_estimate_ms: 150
     depends_on: []
 
@@ -61,6 +67,7 @@ skills:
       escalate_confidence_threshold: 0.60
       pg_conn: "${runtime.pg_conn}"
     cost: high
+    phase: 2
     latency_estimate_ms: 1000
     depends_on: [address_standardizer]
 
@@ -74,6 +81,7 @@ skills:
     config:
       strict_mode: false
     cost: medium
+    phase: 2
     latency_estimate_ms: 500
     depends_on: [municipality_authority]
 
@@ -85,26 +93,27 @@ skills:
       - geocode_cache
     config:
       rate_limit: 1
-      countrycodes: "ca"
       cache_ttl_days: 30
       pg_conn: "${runtime.pg_conn}"
     cost: high
+    phase: 2
     latency_estimate_ms: 1500
     depends_on: [address_standardizer]
 
-  skill_planner:
-    class: skills._common.skill_planner.skill_planner.SkillPlanner
-    skill_doc: skills/_common/skill_planner/skill.md
+  data_quality_triage:
+    class: skills.real_estate.data_quality_triage.data_quality_triage.DataQualityTriageAgent
+    skill_doc: skills/real_estate/data_quality_triage/skill.md
     tools:
-      - registry
+      - confidence_scorer
+      - completeness_analyzer
+      - pattern_validator
     config:
-      tier: "fast"
-      plan_cache_ttl_hours: 24
-      pg_conn: "${runtime.pg_conn}"
-      llm_client: "${runtime.llm_client}"
-    cost: high
-    latency_estimate_ms: 2000
-    depends_on: [data_quality_triage]
+      min_confidence_auto_complete: 0.85
+      min_confidence_agent_review: 0.60
+    cost: medium
+    phase: triage
+    latency_estimate_ms: 300
+    depends_on: [geographic_validator]
 
   web_search_enricher:
     class: skills._common.web_search_enricher.web_search_enricher.WebSearchEnricher
@@ -118,19 +127,21 @@ skills:
       pg_conn: "${runtime.pg_conn}"
       web_cache: "${runtime.web_cache}"
     cost: high
+    phase: 3
     latency_estimate_ms: 3000
     depends_on: [data_quality_triage]
 
-  data_quality_triage:
-    class: skills.real_estate.data_quality_triage.data_quality_triage.DataQualityTriageAgent
-    skill_doc: skills/real_estate/data_quality_triage/skill.md
+  skill_planner:
+    class: skills._common.skill_planner.skill_planner.SkillPlanner
+    skill_doc: skills/_common/skill_planner/skill.md
     tools:
-      - confidence_scorer
-      - completeness_analyzer
-      - pattern_validator
+      - registry
     config:
-      min_confidence_auto_complete: 0.85
-      min_confidence_agent_review: 0.60
-    cost: medium
-    latency_estimate_ms: 300
-    depends_on: [geographic_validator]
+      tier: "fast"
+      plan_cache_ttl_hours: 24
+      pg_conn: "${runtime.pg_conn}"
+      llm_client: "${runtime.llm_client}"
+    cost: high
+    phase: 4
+    latency_estimate_ms: 2000
+    depends_on: [data_quality_triage]

@@ -50,14 +50,12 @@ def test_address_cleaning_agent():
 
     result = agent.execute(record)
 
-    # No pg_conn → no spell corrections; address_standardizer still runs
-    assert result["city"] == "toronot"  # unchanged without DB
-    assert result["municipality"] == "scarbbrough"  # unchanged without DB
-    assert "Avenue" in result["address"]  # Ave→Avenue still works (deterministic)
+    # symspellpy corrects common words even without DB; address_standardizer always runs
+    assert "Avenue" in result["address"]  # Ave→Avenue expansion (deterministic)
 
 
 def test_spell_checker_no_conn_no_corrections():
-    """SpellChecker without pg_conn loads empty dict — no corrections made."""
+    """SpellChecker without pg_conn uses only symspellpy — address field untouched (not in text_fields)."""
     registry = SkillRegistry.load("real_estate")
     spell_checker = registry.get("spell_checker")
 
@@ -69,33 +67,29 @@ def test_spell_checker_no_conn_no_corrections():
 
     result = spell_checker.run(record)
 
-    # No pg_conn → corrections dict empty → values unchanged
-    assert result["city"] == "toronot"
-    assert result["municipality"] == "scarbbrough"
+    # address is NOT in text_fields → always untouched
+    assert result["address"] == "123 Main St"
+    # city and municipality are in text_fields — symspellpy may correct them
+    # (domain overrides are empty without pg_conn, but symspellpy general dictionary still runs)
+    assert "city" in result
+    assert "municipality" in result
 
 
 def test_spell_checker_with_injected_corrections():
-    """SpellChecker with corrections injected via mock conn corrects fields."""
-    from unittest.mock import MagicMock
-    from skills.real_estate.spell_checker.spell_checker import SpellChecker
+    from unittest.mock import MagicMock, patch
+    from skills._common.spell_checker.spell_checker import SpellChecker
 
-    # Patch get_corrections_dict to return known data without a real DB
-    with __import__("unittest.mock", fromlist=["patch"]).patch(
-        "cleaning.spell_corrections_data.get_corrections_dict",
-        return_value={
-            "scarbbrough": "scarborough",
-            "toronot": "toronto",
-        },
-    ):
-        mock_conn = MagicMock()
-        spell_checker = SpellChecker({"pg_conn": mock_conn, "threshold": 0.85})
-
-    record = {"city": "toronot", "municipality": "scarbbrough"}
-    result = spell_checker.run(record)
-
-    assert result["city"] == "toronto"
+    with patch("cleaning.spell_corrections_data.get_corrections_dict", return_value={"scarbbrough": "scarborough"}):
+        spell_checker = SpellChecker({
+            "pg_conn": MagicMock(),
+            "threshold": 0.85,
+            "text_fields": ["municipality"],
+        })
+    result = spell_checker.run({"municipality": "scarbbrough", "address": "123 Main St"})
     assert result["municipality"] == "scarborough"
-    assert "_decisions" in result
+    assert result["address"] == "123 Main St"   # not in text_fields — untouched
+    assert "_decisions" not in result
+    assert len(spell_checker.get_audit()) == 1
 
 
 def test_address_standardizer_skill():
@@ -113,33 +107,62 @@ def test_address_standardizer_skill():
     assert "Avenue" in result["address"]
 
 
-def test_fuzzy_matcher_exact_match():
-    """Test FuzzyMatcher with exact match."""
-    registry = SkillRegistry.load("real_estate")
-    fuzzy = registry.get("fuzzy_matcher")
+def test_record_linker_exact_match():
+    """RecordLinker exact-match rule links identical field values."""
+    from skills._common.record_linker.record_linker import RecordLinker
+    linker = RecordLinker({
+        "blocking_fields": [],
+        "match_rules": [{
+            "name": "address_exact",
+            "fields": ["address"],
+            "match_type": "exact",
+            "weight": 1.0,
+        }]
+    })
+    record = {"id": "A", "address": "25 Muir Avenue"}
+    candidates = [{"id": "B", "address": "25 Muir Avenue"}]
+    result = linker.run(record, tools={"candidates": candidates})
+    linked = result.get("_linked_records", [])
+    assert len(linked) == 1
+    assert linked[0]["confidence"] == 1.0
 
-    similarity, decision = fuzzy.match("25 Muir Avenue", "25 Muir Avenue")
-    assert similarity == 1.0
-    assert decision["confidence"] == 1.0
+
+def test_record_linker_fuzzy_variant():
+    """RecordLinker fuzzy rule links near-duplicate addresses."""
+    from skills._common.record_linker.record_linker import RecordLinker
+    linker = RecordLinker({
+        "blocking_fields": [],
+        "match_rules": [{
+            "name": "address_fuzzy",
+            "fields": ["address"],
+            "match_type": "fuzzy",
+            "threshold": 0.60,
+            "weight": 1.0,
+        }]
+    })
+    record = {"id": "A", "address": "25 Muir Ave"}
+    candidates = [{"id": "B", "address": "25 Muir Avenue"}]
+    result = linker.run(record, tools={"candidates": candidates})
+    assert len(result.get("_linked_records", [])) >= 1
 
 
-def test_fuzzy_matcher_variant():
-    """Test FuzzyMatcher with address variants."""
-    registry = SkillRegistry.load("real_estate")
-    fuzzy = registry.get("fuzzy_matcher")
-
-    # Should match "Ave" vs "Avenue" (tokens match, just abbreviation difference)
-    similarity, decision = fuzzy.match("25 Muir Ave", "25 Muir Avenue")
-    assert similarity >= 0.60  # Should be reasonable similarity
-
-
-def test_fuzzy_matcher_different():
-    """Test FuzzyMatcher with different addresses."""
-    registry = SkillRegistry.load("real_estate")
-    fuzzy = registry.get("fuzzy_matcher")
-
-    similarity, decision = fuzzy.match("123 Main St", "456 Queen Ave")
-    assert similarity < 0.5  # Should be low similarity
+def test_record_linker_no_match():
+    """RecordLinker returns no links when addresses are too different."""
+    from skills._common.record_linker.record_linker import RecordLinker
+    linker = RecordLinker({
+        "blocking_fields": [],
+        "match_rules": [{
+            "name": "address_fuzzy",
+            "fields": ["address"],
+            "match_type": "fuzzy",
+            "threshold": 0.85,
+            "weight": 1.0,
+        }]
+    })
+    record = {"id": "A", "address": "123 Main St"}
+    candidates = [{"id": "B", "address": "456 Queen Ave"}]
+    result = linker.run(record, tools={"candidates": candidates})
+    assert len(result.get("_linked_records", [])) == 0
 
 
 def test_orchestration_team():
@@ -156,13 +179,60 @@ def test_orchestration_team():
         "municipality": "scarbbrough",
     }
 
-    result = team.process_record(record)
+    result, audit = team.process_record(record)
 
-    # Should have agent decisions logged
-    assert "_agent_decisions" in result or any(key.startswith("_") for key in result.keys())
-    # No pg_conn → spell corrections skip; values unchanged
-    assert result.get("city") == "toronot"
-    assert result.get("municipality") == "scarbbrough"
+    # Result must have triage metadata
+    assert any(key.startswith("_") for key in result.keys())
+    # Audit entries are returned separately, not embedded in record
+    assert "_agent_decisions" not in result
+    assert isinstance(audit, list)
+
+
+def test_audit_entry_model():
+    from skills.models import AuditEntry
+    entry = AuditEntry(
+        skill="SpellChecker",
+        field="city",
+        original="toronot",
+        corrected="toronto",
+        reason="symspellpy edit_dist=1",
+        confidence=0.9,
+    )
+    assert entry.skill == "SpellChecker"
+    assert entry.confidence == 0.9
+
+
+def test_baseskill_audit_accumulation():
+    from skills.models import AuditEntry
+    registry = SkillRegistry.load("real_estate")
+    spell = registry.get("spell_checker")
+
+    spell.clear_audit()
+    spell.run({"city": "toronot"}, {})  # no corrections loaded but audit API must exist
+    entries = spell.get_audit()
+    assert isinstance(entries, list)
+
+
+def test_address_standardizer_config_fields():
+    """Standardizer only touches address_fields — not other fields."""
+    from skills._common.address_standardizer.address_standardizer import AddressStandardizer
+    std = AddressStandardizer({"address_fields": ["address", "mailing_address"]})
+    result = std.run({
+        "address": "123 Main St",
+        "mailing_address": "456 Oak Ave",
+        "notes": "Near Muir Ave",   # not in address_fields
+    })
+    assert "Street" in result["address"]
+    assert "Avenue" in result["mailing_address"]
+    assert result["notes"] == "Near Muir Ave"   # untouched
+
+
+def test_address_standardizer_audit_not_in_record():
+    """_decisions must NOT be in returned record."""
+    from skills._common.address_standardizer.address_standardizer import AddressStandardizer
+    std = AddressStandardizer({"address_fields": ["address"]})
+    result = std.run({"address": "123 Main St"})
+    assert "_decisions" not in result
 
 
 if __name__ == "__main__":

@@ -105,6 +105,7 @@ class SkillRegistry:
             "skill_doc": skill_doc,  # Full markdown content
             "tools": skill_def.get("tools", []),
             "cost": skill_def.get("cost", "medium"),
+            "phase": skill_def.get("phase"),
             "latency_estimate_ms": skill_def.get("latency_estimate_ms", 500),
             "depends_on": skill_def.get("depends_on", []),
         }
