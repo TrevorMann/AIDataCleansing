@@ -189,34 +189,6 @@ print(f"[domain] sub_categories={_DOMAIN_CONFIG.get('sub_categories', [])}")
 SYSTEM_PROMPT = build_system_prompt('CA', schema=DB_SCHEMA)
 
 
-def detect_country_scope(user_query: str) -> str | None:
-    """
-    Return the canonical country code from a user query, or None if ambiguous/multi-country.
-    Returns: 'CA', 'USA', 'NL', 'MX', 'JP', or None
-    """
-    query_lower = user_query.lower()
-
-    if 'north american' in query_lower:
-        return None
-
-    country_keywords = {
-        'CA': ['canadian', 'canada'],
-        'USA': ['american', 'usa', 'united states', 'u.s.'],
-        'NL': ['dutch', 'netherlands', 'holland', 'european', 'europe'],
-        'MX': ['mexican', 'mexico'],
-        'JP': ['japanese', 'japan'],
-    }
-
-    matched = [code for code, keywords in country_keywords.items()
-               if any(kw in query_lower for kw in keywords)]
-
-    # 'us' too short for substring match — word boundary only
-    if not matched and re.search(r'\bus\b', query_lower):
-        matched = ['USA']
-
-    return matched[0] if len(matched) == 1 else None
-
-
 _SQLITE_TO_JSON_TYPE = {
     'TEXT': 'string',
     'INTEGER': 'integer',
@@ -533,46 +505,6 @@ class DataCleaningConversation:
         for r in records:
             lines.append(f"  {r}")
         return "\n".join(lines)
-
-    def handle_canada_cleaning(self, user_query: str) -> str:
-        original = self.system_prompt
-        self.system_prompt = build_system_prompt('CA', schema=DB_SCHEMA)
-        try:
-            return self._run_cleaning_workflow(user_query, country_scope='CA')
-        finally:
-            self.system_prompt = original
-
-    def handle_usa_cleaning(self, user_query: str) -> str:
-        original = self.system_prompt
-        self.system_prompt = build_system_prompt('USA', schema=DB_SCHEMA)
-        try:
-            return self._run_cleaning_workflow(user_query, country_scope='USA')
-        finally:
-            self.system_prompt = original
-
-    def handle_europe_cleaning(self, user_query: str) -> str:
-        original = self.system_prompt
-        self.system_prompt = build_system_prompt('NL', schema=DB_SCHEMA)
-        try:
-            return self._run_cleaning_workflow(user_query, country_scope='NL')
-        finally:
-            self.system_prompt = original
-
-    def handle_mexico_cleaning(self, user_query: str) -> str:
-        original = self.system_prompt
-        self.system_prompt = build_system_prompt('MX', schema=DB_SCHEMA)
-        try:
-            return self._run_cleaning_workflow(user_query, country_scope='MX')
-        finally:
-            self.system_prompt = original
-
-    def handle_japan_cleaning(self, user_query: str) -> str:
-        original = self.system_prompt
-        self.system_prompt = build_system_prompt('JP', schema=DB_SCHEMA)
-        try:
-            return self._run_cleaning_workflow(user_query, country_scope='JP')
-        finally:
-            self.system_prompt = original
 
     def preprocess_data(self, user_input: str) -> str:
         """Pre-process data before sending to Claude. Extract and clean what we can."""
