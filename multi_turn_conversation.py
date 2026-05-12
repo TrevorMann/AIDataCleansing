@@ -859,6 +859,8 @@ class DataCleaningConversation:
             print(f"{'='*80}")
             t = time.time()
             research_table = agent.format_research_batch(needs_research)
+            if country_scope is None:
+                print("  ⚠️  No sub-category scope derived — using generic research prompt")
             research_prompt = build_research_prompt(country_scope, research_table)
             step4_elapsed = time.time() - t
             print(f"  Sending {len(needs_research)}/{len(records)} records to Claude")
@@ -968,7 +970,7 @@ class DataCleaningConversation:
         print(f"{'='*80}")
         print("⏱️  TIMING SUMMARY")
         print(f"{'='*80}")
-        print(f"  Step 1 Interpret query:      {step1_elapsed:6.2f}s")
+        print(f"  Step 1 Interpret scope:      {step1_elapsed:6.2f}s")
         print(f"  Step 2 Fetch records:        {step2_elapsed:6.2f}s")
         print(f"  Step 3 Python pre-clean:     {step3_elapsed:6.2f}s  ({python_only} records done, no API)")
         if needs_research:
