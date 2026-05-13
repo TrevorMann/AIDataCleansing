@@ -8,6 +8,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from psycopg import sql
+
+from prompts.annotation import build_annotation_prompt
 from seeders.registry import SeederRegistry
 
 logger = logging.getLogger(__name__)
@@ -50,6 +53,10 @@ class MetadataAnnotationService:
         tables: list[str] = None,
     ) -> AnnotationReport:
         """Annotate unannotated columns for domain. Skips existing unless force=True."""
+        if self._llm is None:
+            raise ValueError(
+                "llm_client is required to annotate; use list_gaps() for dry-run discovery."
+            )
         tables = tables or self.DEFAULT_TABLES
         try:
             sr = SeederRegistry(domain)
@@ -106,7 +113,9 @@ class MetadataAnnotationService:
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    f'SELECT "{column}" FROM "{table}" WHERE "{column}" IS NOT NULL LIMIT %s',  # noqa: S608
+                    sql.SQL("SELECT {} FROM {} WHERE {} IS NOT NULL LIMIT %s").format(
+                        sql.Identifier(column), sql.Identifier(table), sql.Identifier(column)
+                    ),
                     (n,),
                 )
                 return [row[0] for row in cur.fetchall()]
@@ -121,8 +130,6 @@ class MetadataAnnotationService:
         column: str,
         conn,
     ) -> dict:
-        from prompts.annotation import build_annotation_prompt
-
         samples = self._get_sample_values(table, column, conn)
         prompt = build_annotation_prompt(domain, domain_description, table, column, samples)
 
