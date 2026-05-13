@@ -26,3 +26,113 @@ def test_build_annotation_prompt_empty_samples_says_none():
     prompt = build_annotation_prompt("test", "Test domain", "raw_data", "ref_1", [])
     assert "ref_1" in prompt
     assert "none available" in prompt
+
+
+from services.metadata_annotation import AnnotationReport, MetadataAnnotationService
+
+
+# Helper: build a mock conn whose cursor().fetchall() returns results in sequence
+def _mock_conn(*fetchall_results):
+    """Build a mock psycopg2 connection with cursor returning preset data."""
+    conn = MagicMock()
+    cur = conn.cursor.return_value.__enter__.return_value
+    cur.fetchall.side_effect = list(fetchall_results)
+    return conn, cur
+
+
+# --- list_gaps ---
+
+def test_list_gaps_returns_unannotated_columns():
+    svc = MetadataAnnotationService(llm_client=None)
+    conn, _ = _mock_conn(
+        [("raw_data", "postal_code")],          # existing annotations
+        [("id",), ("postal_code",), ("city",)],  # raw_data columns
+        [],                                      # cleaned_data columns
+    )
+    gaps = svc.list_gaps("real_estate", conn, tables=["raw_data", "cleaned_data"])
+    assert {"table_name": "raw_data", "column_name": "id"} in gaps
+    assert {"table_name": "raw_data", "column_name": "city"} in gaps
+    assert {"table_name": "raw_data", "column_name": "postal_code"} not in gaps
+
+
+def test_list_gaps_empty_when_all_annotated():
+    svc = MetadataAnnotationService(llm_client=None)
+    conn, _ = _mock_conn(
+        [("raw_data", "city")],   # existing
+        [("city",)],              # raw_data columns
+    )
+    assert svc.list_gaps("real_estate", conn, tables=["raw_data"]) == []
+
+
+# --- run ---
+
+def test_run_annotates_gaps_and_returns_report():
+    llm = MagicMock()
+    llm.messages_create.return_value.content = [
+        MagicMock(text='{"description": "City name field", "confidence": 0.90}')
+    ]
+    svc = MetadataAnnotationService(llm_client=llm)
+    conn, cur = _mock_conn(
+        [],            # no existing annotations
+        [("city",)],   # raw_data columns
+        [],            # sample values for city
+    )
+    with patch("services.metadata_annotation.SeederRegistry") as mock_sr:
+        mock_sr.return_value.manifest = {"description": "Test domain"}
+        report = svc.run("test_domain", conn, tables=["raw_data"])
+
+    assert report.annotated == 1
+    assert report.skipped == 0
+    assert report.low_confidence == []
+    cur.execute.assert_called()  # upsert was attempted
+
+
+def test_run_skips_existing_when_not_forced():
+    llm = MagicMock()
+    svc = MetadataAnnotationService(llm_client=llm)
+    conn, _ = _mock_conn(
+        [("raw_data", "city")],   # already annotated
+        [("city",)],
+    )
+    with patch("services.metadata_annotation.SeederRegistry") as mock_sr:
+        mock_sr.return_value.manifest = {"description": "Test domain"}
+        report = svc.run("test_domain", conn, force=False, tables=["raw_data"])
+
+    assert report.annotated == 0
+    assert report.skipped == 1
+    llm.messages_create.assert_not_called()
+
+
+def test_run_flags_low_confidence():
+    llm = MagicMock()
+    llm.messages_create.return_value.content = [
+        MagicMock(text='{"description": "Unknown ref field", "confidence": 0.40}')
+    ]
+    svc = MetadataAnnotationService(llm_client=llm)
+    conn, _ = _mock_conn(
+        [],
+        [("ref_1",)],
+        [],  # samples
+    )
+    with patch("services.metadata_annotation.SeederRegistry") as mock_sr:
+        mock_sr.return_value.manifest = {"description": "Test domain"}
+        report = svc.run("test_domain", conn, tables=["raw_data"])
+
+    assert len(report.low_confidence) == 1
+    assert report.low_confidence[0]["column_name"] == "ref_1"
+    assert report.low_confidence[0]["confidence"] == pytest.approx(0.40)
+
+
+def test_run_handles_malformed_llm_response():
+    llm = MagicMock()
+    llm.messages_create.return_value.content = [
+        MagicMock(text="not json at all")
+    ]
+    svc = MetadataAnnotationService(llm_client=llm)
+    conn, _ = _mock_conn([], [("city",)], [])
+    with patch("services.metadata_annotation.SeederRegistry") as mock_sr:
+        mock_sr.return_value.manifest = {"description": "Test domain"}
+        report = svc.run("test_domain", conn, tables=["raw_data"])
+
+    assert report.annotated == 1
+    assert report.low_confidence[0]["confidence"] < 0.70
