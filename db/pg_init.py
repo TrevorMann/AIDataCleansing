@@ -113,6 +113,21 @@ def init_db(db_path: str) -> None:
                 END IF;
             END $$
         """)
+        # Migration 006: annotation provenance fields
+        cursor.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='column_metadata' AND column_name='is_llm_generated'
+                ) THEN
+                    ALTER TABLE column_metadata
+                        ADD COLUMN is_llm_generated BOOLEAN   DEFAULT FALSE,
+                        ADD COLUMN confidence        FLOAT     DEFAULT NULL,
+                        ADD COLUMN generated_at      TIMESTAMP DEFAULT NULL;
+                END IF;
+            END $$
+        """)
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS column_profiles (
