@@ -136,3 +136,37 @@ def test_run_handles_malformed_llm_response():
 
     assert report.annotated == 1
     assert report.low_confidence[0]["confidence"] < 0.70
+
+
+# --- CLI tests ---
+
+import sys
+from unittest.mock import patch, MagicMock
+
+
+def test_cli_dry_run_prints_gaps(capsys):
+    """Dry run prints gaps without writing to DB."""
+    import scripts.annotate_domain as cli_module
+
+    with patch.object(cli_module, "get_db_connection", return_value=MagicMock()), \
+         patch("services.metadata_annotation.MetadataAnnotationService.list_gaps",
+               return_value=[{"table_name": "raw_data", "column_name": "city"}]), \
+         patch("sys.argv", ["annotate_domain.py", "--domain", "real_estate", "--dry-run"]):
+        cli_module.main()
+
+    captured = capsys.readouterr()
+    assert "raw_data.city" in captured.out
+
+
+def test_cli_dry_run_no_gaps_message(capsys):
+    """Dry run prints no-gaps message when all columns annotated."""
+    import scripts.annotate_domain as cli_module
+
+    with patch.object(cli_module, "get_db_connection", return_value=MagicMock()), \
+         patch("services.metadata_annotation.MetadataAnnotationService.list_gaps",
+               return_value=[]), \
+         patch("sys.argv", ["annotate_domain.py", "--domain", "real_estate", "--dry-run"]):
+        cli_module.main()
+
+    captured = capsys.readouterr()
+    assert "No annotation gaps" in captured.out
