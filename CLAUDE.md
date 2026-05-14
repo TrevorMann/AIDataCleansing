@@ -68,6 +68,23 @@ python scripts/init_data.py --domain real_estate --dry-run
 python scripts/init_data.py --domain real_estate --only spell_corrections
 ```
 
+## Annotate Domain Columns
+
+Generate LLM descriptions for each column in `column_metadata` (run after seeding):
+
+```bash
+# Preview unannotated columns (no writes)
+python scripts/annotate_domain.py --domain real_estate --dry-run
+
+# Annotate all gaps
+python scripts/annotate_domain.py --domain real_estate
+
+# Overwrite existing LLM-generated annotations
+python scripts/annotate_domain.py --domain real_estate --force
+```
+
+Annotations stored in `column_metadata` with `is_llm_generated=TRUE` and a `confidence` score. Columns with confidence < 0.70 are flagged — review directly in DB or re-run after improving `prompts/annotation.py`.
+
 ## Run Tests
 
 ```bash
