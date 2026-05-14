@@ -172,3 +172,39 @@ def test_planner_llm_error_degrades_gracefully():
 
     assert result["_planned_skills"] == []
     assert result["_plan_source"] == "error"
+
+
+def test_build_prompt_includes_annotation_context():
+    """When column_metadata has rows for the domain, _build_prompt includes them."""
+    registry = SkillRegistry.load("real_estate")
+    planner = SkillPlanner()
+    planner.domain = "real_estate"
+
+    mock_conn = MagicMock()
+    cur = mock_conn.cursor.return_value.__enter__.return_value
+    cur.fetchall.return_value = [
+        ("raw_data", "postal_code", "CA/US postal code. Format: A1A 1A1 (CA) or 5 digits (US)."),
+    ]
+    planner.conn = mock_conn
+
+    record = {"postal_code": "M5V", "city": "Toronto"}
+    menu = planner._build_menu(registry)
+    prompt = planner._build_prompt(record, menu)
+
+    assert "postal_code" in prompt
+    assert "CA/US postal code" in prompt
+
+
+def test_build_prompt_skips_annotation_context_when_no_conn():
+    """No DB conn → prompt still works, no annotation block."""
+    registry = SkillRegistry.load("real_estate")
+    planner = SkillPlanner()
+    planner.domain = "real_estate"
+    planner.conn = None
+
+    record = {"postal_code": "M5V"}
+    menu = planner._build_menu(registry)
+    prompt = planner._build_prompt(record, menu)
+
+    assert "Column Annotations" not in prompt
+    assert "postal_code" in prompt  # still in record

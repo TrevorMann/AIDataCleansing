@@ -98,6 +98,28 @@ class SkillPlanner(BaseSkill):
             })
         return menu
 
+    def _get_annotation_context(self) -> str:
+        """Query column_metadata for domain annotations. Returns '' if unavailable."""
+        if not self.conn or not self.domain:
+            return ""
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "SELECT table_name, column_name, description "
+                    "FROM column_metadata WHERE domain = %s "
+                    "ORDER BY table_name, column_name",
+                    (self.domain,),
+                )
+                rows = cur.fetchall()
+            if not rows:
+                return ""
+            lines = [f"## Column Annotations (domain: {self.domain})"]
+            for table, col, desc in rows:
+                lines.append(f"{table}.{col}: {desc}")
+            return "\n".join(lines) + "\n\n"
+        except Exception:
+            return ""
+
     def _build_prompt(self, record: dict, menu: List[dict]) -> str:
         safe_record = {k: v for k, v in record.items() if not k.startswith("_") or k in (
             "_triage_route", "_triage_data_confidence", "_gap_hints", "_unknown_fsa",
@@ -107,7 +129,9 @@ class SkillPlanner(BaseSkill):
             [{"name": m["name"], "cost": m["cost"], "depends_on": m["depends_on"]} for m in menu],
             indent=2,
         )
+        annotation_context = self._get_annotation_context()
         return (
+            f"{annotation_context}"
             f"Record:\n{json.dumps(safe_record, indent=2)}\n\n"
             f"Available skills:\n{menu_text}\n\n"
             "Output JSON plan."
