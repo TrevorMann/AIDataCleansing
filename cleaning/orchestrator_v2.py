@@ -53,6 +53,25 @@ class OrchestrationTeam:
         self.batch_budget = batch_budget
         self.planner = registry.get("skill_planner")
         self.triage_skill = registry.get("data_quality_triage")
+        self._warn_annotation_gaps()
+
+    def _warn_annotation_gaps(self) -> None:
+        """Warn once at session start if domain columns lack annotations."""
+        conn = self.registry.runtime.get("pg_conn") if hasattr(self.registry, "runtime") else None
+        domain = getattr(self.registry, "domain", None)
+        if not conn or not domain:
+            return
+        try:
+            from services.metadata_annotation import MetadataAnnotationService
+            gaps = MetadataAnnotationService(llm_client=None).list_gaps(domain, conn)
+            if gaps:
+                logger.warning(
+                    "%d column(s) in '%s' have no annotations. "
+                    "Run: python scripts/annotate_domain.py --domain %s",
+                    len(gaps), domain, domain,
+                )
+        except Exception:
+            pass
 
     def _run_skill(self, skill, record: dict, tools: dict = None) -> Tuple[dict, List]:
         """Run a skill, collect audit, strip _decisions from record."""

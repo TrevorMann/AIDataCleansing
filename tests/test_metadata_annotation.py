@@ -170,3 +170,55 @@ def test_cli_dry_run_no_gaps_message(capsys):
 
     captured = capsys.readouterr()
     assert "No annotation gaps" in captured.out
+
+
+# --- OrchestrationTeam annotation gap warnings ---
+
+import logging
+
+from cleaning.orchestrator_v2 import OrchestrationTeam
+from skills.registry import SkillRegistry
+
+
+def test_orchestration_team_warns_on_annotation_gaps(caplog):
+    """OrchestrationTeam warns at init when domain columns lack annotations."""
+    registry = MagicMock(spec=SkillRegistry)
+    registry.get.return_value = None
+    registry.metadata = {}
+    registry.domain = "real_estate"
+
+    mock_conn = MagicMock()
+    cur = mock_conn.cursor.return_value.__enter__.return_value
+    cur.fetchall.side_effect = [
+        [],           # _get_existing_annotations: no annotations
+        [("city",)],  # _get_table_columns raw_data
+        [],           # _get_table_columns cleaned_data
+    ]
+    registry.runtime = {"pg_conn": mock_conn}
+
+    with caplog.at_level(logging.WARNING, logger="cleaning.orchestrator_v2"):
+        OrchestrationTeam(registry)
+
+    assert any("annotation" in msg.lower() for msg in caplog.messages)
+
+
+def test_orchestration_team_no_warning_when_annotated(caplog):
+    """No warning when all columns are annotated."""
+    registry = MagicMock(spec=SkillRegistry)
+    registry.get.return_value = None
+    registry.metadata = {}
+    registry.domain = "real_estate"
+
+    mock_conn = MagicMock()
+    cur = mock_conn.cursor.return_value.__enter__.return_value
+    cur.fetchall.side_effect = [
+        [("raw_data", "city"), ("cleaned_data", "city")],  # existing
+        [("city",)],                                        # raw_data cols
+        [("city",)],                                        # cleaned_data cols
+    ]
+    registry.runtime = {"pg_conn": mock_conn}
+
+    with caplog.at_level(logging.WARNING, logger="cleaning.orchestrator_v2"):
+        OrchestrationTeam(registry)
+
+    assert not any("annotation" in msg.lower() for msg in caplog.messages)

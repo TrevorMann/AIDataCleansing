@@ -14,6 +14,7 @@ class SkillRegistry:
         self.metadata: Dict[str, Dict] = {}  # {skill_name} → metadata dict
         self.config: Dict[str, Any] = {}  # merged config
         self.runtime: Dict[str, Any] = {}  # runtime resources (e.g. pg_conn)
+        self.domain: str = ""
 
     @classmethod
     def load(cls, domain: str, config_path: Optional[str] = None, runtime: Optional[Dict] = None) -> "SkillRegistry":
@@ -39,6 +40,7 @@ class SkillRegistry:
             domain: Domain name
             config_path: Optional custom path (defaults to skills/{domain}/skills.yaml)
         """
+        self.domain = domain
         if config_path is None:
             config_path = Path(__file__).parent / domain / "skills.yaml"
         else:
