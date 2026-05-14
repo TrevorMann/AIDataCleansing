@@ -21,7 +21,7 @@ seeders:
     rate_limit_seconds: 1.0
 - name: statscan_shapefile
   class: seeders.real_estate.statscan_shapefile.StatsCanShapefileSeeder
-  enabled: true
+  enabled: false
   refresh_cadence: yearly
   license: Statistics Canada Open License
   config:

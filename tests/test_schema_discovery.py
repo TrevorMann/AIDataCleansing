@@ -39,5 +39,5 @@ def test_format_schema_for_prompt():
         formatted = format_schema_for_prompt(db_path)
         assert "raw_data" in formatted
         assert "cleaned_data" in formatted
-        assert "audit_log" in formatted
+        assert "audit_log" not in formatted  # infrastructure table — intentionally excluded
         assert isinstance(formatted, str)

@@ -71,12 +71,17 @@ def init_db(db_path: str) -> None:
     # used to build Claude tool schemas at runtime without hardcoding
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS column_metadata (
+        domain      TEXT NOT NULL DEFAULT 'base',
         table_name  TEXT NOT NULL,
         column_name TEXT NOT NULL,
         description TEXT,
-        PRIMARY KEY (table_name, column_name)
+        PRIMARY KEY (domain, table_name, column_name)
     )
     ''')
+    # Migration: add domain column to pre-existing tables that lack it
+    cursor.execute("PRAGMA table_info(column_metadata)")
+    if 'domain' not in {row[1] for row in cursor.fetchall()}:
+        cursor.execute("ALTER TABLE column_metadata ADD COLUMN domain TEXT NOT NULL DEFAULT 'base'")
 
     _seed_column_metadata(cursor)
 
@@ -87,27 +92,27 @@ def init_db(db_path: str) -> None:
 def _seed_column_metadata(cursor) -> None:
     """Insert default column descriptions if they don't already exist."""
     defaults = [
-        ('raw_data',      'name',           'Full name of the contact in Proper Case'),
-        ('raw_data',      'age',            'Integer between 1 and 120'),
-        ('raw_data',      'city',           'City name in Proper Case'),
-        ('raw_data',      'address',        'Street address with standardized abbreviations (Street, Avenue, Road)'),
-        ('raw_data',      'postal_code',    'Postal/ZIP code in the format for the record country'),
-        ('raw_data',      'municipality',   'Real estate neighbourhood name (e.g. North York, Upper East Side)'),
-        ('raw_data',      'state_province', 'Full state or province name (e.g. Ontario, New York)'),
-        ('raw_data',      'country',        'Must be one of: CA, USA, NL, MX, JP'),
-        ('raw_data',      'phone',          'Phone number in country-appropriate format'),
-        ('cleaned_data',  'name',           'Cleaned full name in Proper Case'),
-        ('cleaned_data',  'age',            'Integer between 1 and 120'),
-        ('cleaned_data',  'city',           'Cleaned city name in Proper Case'),
-        ('cleaned_data',  'address',        'Cleaned street address'),
-        ('cleaned_data',  'postal_code',    'Validated postal/ZIP code'),
-        ('cleaned_data',  'municipality',   'Verified real estate neighbourhood name'),
-        ('cleaned_data',  'state_province', 'Full state or province name'),
-        ('cleaned_data',  'country',        'Full country name (e.g. Canada, United States)'),
-        ('cleaned_data',  'phone',          'Standardized phone number'),
-        ('cleaned_data',  'validation_notes', 'Notes on what was changed and confidence level'),
+        ('base', 'raw_data',      'name',             'Full name of the contact in Proper Case'),
+        ('base', 'raw_data',      'age',              'Integer between 1 and 120'),
+        ('base', 'raw_data',      'city',             'City name in Proper Case'),
+        ('base', 'raw_data',      'address',          'Street address with standardized abbreviations (Street, Avenue, Road)'),
+        ('base', 'raw_data',      'postal_code',      'Postal/ZIP code in the format for the record country'),
+        ('base', 'raw_data',      'municipality',     'Real estate neighbourhood name (e.g. North York, Upper East Side)'),
+        ('base', 'raw_data',      'state_province',   'Full state or province name (e.g. Ontario, New York)'),
+        ('base', 'raw_data',      'country',          'Must be one of: CA, USA, NL, MX, JP'),
+        ('base', 'raw_data',      'phone',            'Phone number in country-appropriate format'),
+        ('base', 'cleaned_data',  'name',             'Cleaned full name in Proper Case'),
+        ('base', 'cleaned_data',  'age',              'Integer between 1 and 120'),
+        ('base', 'cleaned_data',  'city',             'Cleaned city name in Proper Case'),
+        ('base', 'cleaned_data',  'address',          'Cleaned street address'),
+        ('base', 'cleaned_data',  'postal_code',      'Validated postal/ZIP code'),
+        ('base', 'cleaned_data',  'municipality',     'Verified real estate neighbourhood name'),
+        ('base', 'cleaned_data',  'state_province',   'Full state or province name'),
+        ('base', 'cleaned_data',  'country',          'Full country name (e.g. Canada, United States)'),
+        ('base', 'cleaned_data',  'phone',            'Standardized phone number'),
+        ('base', 'cleaned_data',  'validation_notes', 'Notes on what was changed and confidence level'),
     ]
     cursor.executemany(
-        'INSERT OR IGNORE INTO column_metadata (table_name, column_name, description) VALUES (?, ?, ?)',
+        'INSERT OR IGNORE INTO column_metadata (domain, table_name, column_name, description) VALUES (?, ?, ?, ?)',
         defaults,
     )

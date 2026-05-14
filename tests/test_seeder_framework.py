@@ -50,7 +50,7 @@ def test_seeder_validate_schema_raises_when_table_missing():
     mock_cur = MagicMock()
     mock_cur.__enter__ = lambda s: s
     mock_cur.__exit__ = MagicMock(return_value=False)
-    mock_cur.fetchone.return_value = (False,)
+    mock_cur.fetchone.return_value = None  # SQLite "not found" = None
     mock_conn = MagicMock()
     mock_conn.cursor.return_value = mock_cur
 
