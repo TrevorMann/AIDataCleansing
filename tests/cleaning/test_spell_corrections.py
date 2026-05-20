@@ -8,9 +8,9 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-import skills.real_estate.spell_checker.spell_checker as spell_checker_module
+import skills._common.spell_checker.spell_checker as spell_checker_module
 from cleaning.spell_corrections_data import load_seed_corrections, get_corrections_dict
-from skills.real_estate.spell_checker.spell_checker import SpellChecker
+from skills._common.spell_checker.spell_checker import SpellChecker
 
 
 # --- Lock test: no hardcoded corrections in source ---

@@ -2,8 +2,8 @@
 import os
 import sys
 import re
-from database import init_db
-from db_helpers import get_all_raw_data
+from db.sqlite_init import init_db
+from db.sqlite_helpers import get_all_raw_data
 from config import DB_PATH
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

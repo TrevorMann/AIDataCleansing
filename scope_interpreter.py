@@ -1,7 +1,14 @@
 import json
 import logging
-from schema_discovery import format_schema_for_prompt
+import time
+from db.schema_discovery import format_schema_for_prompt
 from llm_client_factory import build_message_kwargs, log_usage, build_system_param
+
+try:
+    from anthropic import RateLimitError as AnthropicRateLimitError
+except ModuleNotFoundError:
+    class AnthropicRateLimitError(Exception):  # type: ignore[no-redef]
+        pass
 
 logger = logging.getLogger(__name__)
 
@@ -31,13 +38,23 @@ class ScopeInterpreter:
         user_msg = f"Schema:\n{schema}\n\nUser request: {user_query}"
 
         kwargs = build_message_kwargs(self._backend)
-        response = self._client.messages.create(
-            model=self._model,
-            max_tokens=200,
-            system=build_system_param(self._backend, _SYSTEM),
-            messages=[{"role": "user", "content": user_msg}],
-            **kwargs,
-        )
+        last_exc: Exception | None = None
+        for attempt in range(3):
+            try:
+                response = self._client.messages.create(
+                    model=self._model,
+                    max_tokens=200,
+                    system=build_system_param(self._backend, _SYSTEM),
+                    messages=[{"role": "user", "content": user_msg}],
+                    **kwargs,
+                )
+                break
+            except AnthropicRateLimitError as e:
+                last_exc = e
+                if attempt < 2:
+                    time.sleep(1 * (2 ** attempt))
+        else:
+            raise last_exc
         log_usage(self._backend, response.usage)
 
         raw = next(

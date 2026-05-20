@@ -243,12 +243,16 @@ def test_full_pipeline_batch():
     assert report.summary_text
 
 
-from skills.real_estate.address_standardizer.address_standardizer import AddressStandardizer
-from skills.real_estate.data_quality_triage.data_quality_triage import DataQualityTriageAgent
+from skills._common.address_standardizer.address_standardizer import AddressStandardizer
+from skills._common.data_quality_triage.data_quality_triage import DataQualityTriageAgent
 
 
 def test_triage_uses_min_confidence():
-    triage = DataQualityTriageAgent()
+    triage = DataQualityTriageAgent(config={
+        "required_fields": ["address", "city", "postal_code", "municipality", "country"],
+        "confidence_signal_keys": ["_municipality_confidence"],
+        "validated_signal_keys": ["_geographic_validated"],
+    })
     rec = {
         "_municipality_confidence": 0.5,
         "_geographic_validated": True,

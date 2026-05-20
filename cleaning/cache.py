@@ -116,6 +116,9 @@ class WebSearchCache:
                 pass
         return result
 
+    def get_or_search(self, query: str, max_results: int = 5) -> str:
+        return self.web_search_cached(query, max_results)
+
     def stats(self) -> dict[str, int]:
         with self._lock:
             return {

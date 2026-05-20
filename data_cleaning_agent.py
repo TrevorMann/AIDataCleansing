@@ -13,10 +13,10 @@ import sys
 import json
 import re
 from datetime import datetime
-from database import init_db, get_db_connection
-from db_helpers import get_all_raw_data, insert_cleaned_data, insert_audit_log
+from db.sqlite_init import init_db, get_db_connection
+from db.sqlite_helpers import get_all_raw_data, insert_cleaned_data, insert_audit_log
+from db.schema_discovery import get_all_schemas
 from validate_data_quality import get_records_needing_cleaning, check_record_quality
-from schema_discovery import get_all_schemas
 from config import DB_PATH
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

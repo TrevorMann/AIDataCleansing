@@ -4,14 +4,17 @@ import json
 import time
 import urllib.request
 import urllib.parse
-from anthropic import Anthropic
-from database import init_db, get_db_connection
-from db_helpers import (
+try:
+    from anthropic import Anthropic
+except ModuleNotFoundError:
+    Anthropic = None  # type: ignore[assignment,misc]
+from db.sqlite_init import init_db, get_db_connection
+from db.sqlite_helpers import (
     insert_raw_data, get_all_raw_data, insert_cleaned_data, insert_audit_log,
     update_raw_data, update_cleaned_data, delete_raw_data,
     get_cleaned_data_for_raw, query_records, get_raw_data_by_id,
 )
-from schema_discovery import format_schema_for_prompt
+from db.schema_discovery import format_schema_for_prompt
 from data_cleaning_agent import DataCleaningAgent
 from guardrails import (
     GuardrailError, check_age, check_country, check_protected_fields,
@@ -39,7 +42,9 @@ load_env()
 
 # Initialize database
 DB_PATH = os.getenv("DB_PATH", "data/cleaning.db")
-os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+_db_dir = os.path.dirname(DB_PATH)
+if _db_dir:
+    os.makedirs(_db_dir, exist_ok=True)
 init_db(DB_PATH)
 DB_SCHEMA = format_schema_for_prompt(DB_PATH)
 
@@ -208,7 +213,7 @@ def _build_table_properties(table_name: str, exclude: set = None) -> dict:
     Adding a column to the table or updating its description in column_metadata is enough —
     no Python changes needed.
     """
-    from schema_discovery import get_table_schema, get_column_metadata
+    from db.schema_discovery import get_table_schema, get_column_metadata
     exclude = (exclude or set()) | _AUTO_MANAGED
     columns = get_table_schema(DB_PATH, table_name)
     descriptions = get_column_metadata(DB_PATH, table_name)
@@ -227,7 +232,7 @@ def _build_table_properties(table_name: str, exclude: set = None) -> dict:
 
 def _column_names(table_name: str, exclude: set = None) -> list[str]:
     """Return editable column names for a table (excluding auto-managed cols)."""
-    from schema_discovery import get_table_schema
+    from db.schema_discovery import get_table_schema
     exclude = (exclude or set()) | _AUTO_MANAGED
     return [c['name'] for c in get_table_schema(DB_PATH, table_name) if c['name'] not in exclude]
 

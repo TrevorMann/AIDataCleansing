@@ -59,7 +59,10 @@ BACKEND SELECTION
 import os
 import logging
 from pathlib import Path
-from anthropic import Anthropic
+try:
+    from anthropic import Anthropic
+except ModuleNotFoundError:
+    Anthropic = None  # type: ignore[assignment,misc]
 
 logger = logging.getLogger(__name__)
 

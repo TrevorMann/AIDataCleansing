@@ -1,3 +1,39 @@
+# General Instructions
+
+## 1. Think Before Coding
+Don't assume. Don't hide confusion. Surface tradeoffs.
+
+Before implementing:
+- State your assumptions explicitly. If uncertain, ask.
+- If multiple interpretations exist, present them.
+- If a simpler approach exists, say so.
+- If something is unclear, stop. Name what's confusing.
+
+## 2. Simplicity First
+Minimum code that solves the problem. Nothing speculative.
+
+- No features beyond what was asked.
+- No abstractions for single-use code.
+- No “flexibility” that wasn't requested.
+- No error handling for impossible scenarios.
+- If 200 lines could be 50, rewrite it.
+
+## 3. Surgical Changes
+Touch only what you must. Clean up only your own mess.
+
+- Don't “improve” adjacent code or formatting.
+- Don't refactor things that aren't broken.
+- Match existing style, even if you'd do it differently.
+- If you notice dead code, mention it — don't delete it.
+
+## 4. Goal-Driven Execution
+Define success criteria. Loop until verified.
+
+Transform tasks into verifiable goals:
+- “Add validation” → “Write tests, then make them pass”
+- “Fix the bug” → “Reproduce it in a test, then fix”
+- “Refactor X” → “Ensure tests pass before and after”
+
 # AI Data Cleaning Project — Claude Code Instructions
 
 ## Environment Variables
@@ -85,6 +121,11 @@ python scripts/annotate_domain.py --domain real_estate --force
 
 Annotations stored in `column_metadata` with `is_llm_generated=TRUE` and a `confidence` score. Columns with confidence < 0.70 are flagged — review directly in DB or re-run after improving `prompts/annotation.py`.
 
+## Test Writing
+
+Write a test that reproduces it, then make it pass
+Write tests for invalid inputs, then make them pass
+
 ## Run Tests
 
 ```bash
@@ -92,6 +133,7 @@ python -m pytest tests/ -v
 ```
 
 Tests use mocks — no real DB or API keys required.
+
 
 ## Run Pipeline
 
@@ -118,16 +160,22 @@ result = team.process_record(record)
 # 1. Scaffold skeleton
 python scripts/scaffold_domain.py --domain sports_ticketing
 
-# 2. Edit generated files:
-#    skills/sports_ticketing/skills.yaml    — declare skills
-#    seeders/sports_ticketing/manifest.yaml — declare seeders
-#    data/seeds/sports_ticketing/           — drop seed CSVs
+# 2. Generate seed files via LLM-assisted Q&A (recommended)
+python scripts/research_domain.py --domain sports_ticketing
+#    Asks about entity type, fields, spelling issues, linking fields, gap types, trusted sources.
+#    Generates: spell_corrections.csv, query_packs.yaml, column_metadata.yaml
+#    Use --dry-run to preview without writing.
 
-# 3. Preview seeder plan
+# 3. Wire skills in skills/sports_ticketing/skills.yaml
+#    - Copy _common skill entries from real_estate reference, adjust config
+#    - Add domain-specific skills only for logic that is truly domain-specific
+
+# 4. Declare seeders in seeders/sports_ticketing/manifest.yaml
+
+# 5. Seed, annotate, verify
 python scripts/init_data.py --domain sports_ticketing --dry-run
-
-# 4. Seed data
 python scripts/init_data.py --domain sports_ticketing
+python scripts/annotate_domain.py --domain sports_ticketing
 ```
 
 ## Architecture
@@ -163,30 +211,34 @@ Municipality tables (001, 002) from postgres branch — apply manually if needed
 
 ## Skills Layout
 
+Skills are split into two tiers:
+- `_common/` — domain-agnostic; any domain wires these via `skills.yaml` config
+- `<domain>/` — domain-specific logic only; keep to the minimum
+
 ```
 skills/
 ├── base.py                    # BaseSkill ABC
 ├── agent.py                   # BaseAgent (sequential executor)
 ├── registry.py                # SkillRegistry (O(1) lookup, runtime injection)
-├── _common/                   # Domain-agnostic skills
-│   ├── skill_planner/         # LLM planner
-│   └── web_search_enricher/   # Tavily enricher + per-domain parsers
-├── real_estate/               # Real estate domain
-│   ├── skills.yaml
-│   ├── spell_checker/
-│   ├── address_standardizer/
-│   ├── fuzzy_matcher/
-│   ├── municipality_authority/
-│   ├── geographic_validator/
-│   ├── nominatim_geocoder/
-│   ├── data_quality_triage/
-│   ├── web_search_enricher    # wired from _common
-│   └── skill_planner          # wired from _common
+├── _common/                   # Domain-agnostic skills — wire via skills.yaml config
+│   ├── spell_checker/         # DB-backed spell correction (domain-overridable)
+│   ├── address_standardizer/  # Abbreviation expansion, quadrant normalization
+│   ├── record_linker/         # Config-driven fuzzy record matching
+│   ├── data_quality_triage/   # Routes record: done/needs_review/unsalvageable (config-driven fields)
+│   ├── skill_planner/         # LLM reads skill docs + column annotations → ordered plan
+│   └── web_search_enricher/   # Tavily enricher + per-domain parsers in parsers/<domain>/
+├── real_estate/               # Real estate domain — domain-specific only
+│   ├── skills.yaml            # Wires _common skills with RE config + declares RE-specific skills
+│   ├── municipality_authority/  # FSA → municipality via PG cache
+│   ├── geographic_validator/    # Province/city/postal coherence
+│   └── nominatim_geocoder/      # OSM geocoding with PG cache
 └── sports_ticketing/          # Sports ticketing domain
-    ├── skills.yaml
-    ├── event_normalizer/
-    └── ticket_product_categorizer/
+    ├── skills.yaml            # Wires _common skills with ST config + declares ST-specific skills
+    ├── event_normalizer/        # Team name canonicalization, date/time normalization
+    └── ticket_product_categorizer/  # Product type classification
 ```
+
+**Rule:** If a skill doesn't contain domain-specific logic, it belongs in `_common/` and is wired via config in the domain's `skills.yaml`. Never copy a skill class into a domain directory just to re-export it.
 
 ## Prompt Architecture
 

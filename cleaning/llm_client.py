@@ -16,8 +16,11 @@ from dataclasses import dataclass
 from typing import Any
 
 try:
-    from anthropic import Anthropic
+    from anthropic import Anthropic, RateLimitError as AnthropicRateLimitError
 except ModuleNotFoundError:
+    class AnthropicRateLimitError(Exception):  # type: ignore[no-redef]
+        """Stub for tests without the anthropic package."""
+
     class Anthropic:  # type: ignore[override]
         """Minimal fallback used in tests when the anthropic package is absent."""
 
@@ -83,7 +86,7 @@ class LLMClient:
                     messages=messages,
                     tools=tools_arg,
                 )
-            except (ConnectionError, TimeoutError) as e:
+            except (ConnectionError, TimeoutError, AnthropicRateLimitError) as e:
                 last_exc = e
                 if attempt < 2:
                     time.sleep(0.5 * (2 ** attempt))
@@ -131,6 +134,13 @@ def _build_one(backend_token: str) -> LLMClient:
 
     sdk = Anthropic(base_url=base_url, api_key=api_key) if base_url else Anthropic(api_key=api_key)
     return LLMClient(sdk=sdk, model=model, supports_cache_control=cache, base_url=base_url)
+
+
+def build_client_for_tier(tier: str) -> LLMClient:
+    """Return a single-tier client. Used by skills that need lazy initialization."""
+    if tier not in ("fast", "standard", "deep"):
+        raise ValueError(f"Unknown tier: {tier!r}. Valid: fast, standard, deep")
+    return getattr(build_clients(), tier)
 
 
 def build_clients() -> Clients:

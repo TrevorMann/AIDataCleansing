@@ -101,13 +101,16 @@ skills:
     depends_on: [address_standardizer]
 
   data_quality_triage:
-    class: skills.real_estate.data_quality_triage.data_quality_triage.DataQualityTriageAgent
-    skill_doc: skills/real_estate/data_quality_triage/skill.md
+    class: skills._common.data_quality_triage.data_quality_triage.DataQualityTriageAgent
+    skill_doc: skills/_common/data_quality_triage/skill.md
     tools:
       - confidence_scorer
       - completeness_analyzer
       - pattern_validator
     config:
+      required_fields: [address, city, postal_code, municipality, country]
+      confidence_signal_keys: [_municipality_confidence]
+      validated_signal_keys: [_geographic_validated]
       min_confidence_auto_complete: 0.85
       min_confidence_agent_review: 0.60
     cost: medium
