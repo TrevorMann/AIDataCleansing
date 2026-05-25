@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Interactive data-cleaning chatbot CLI.
 
-Free-form Q&A with Claude (CRUD + web search tools).
+Free-form Q&A with AI Models (CRUD + web search tools).
 CLEAN [query] — LLM scopes records via query_records, then runs OrchestrationTeam.
 
 Commands:
@@ -386,7 +386,7 @@ def run() -> None:
     print("Data Cleaning CLI")
     print("  CLEAN [query]  — run the cleaning pipeline")
     print("  QUIT           — exit")
-    print("  (anything else) — ask Claude")
+    print("  (anything else) — ask PikkaDataBot")
     print(f"{'='*60}\n")
 
     while True:
@@ -413,7 +413,7 @@ def run() -> None:
         messages.append({"role": "user", "content": user_input})
         response = _llm_loop(messages, system_param, tools)
         messages.append({"role": "assistant", "content": response})
-        print(f"\nClaude: {response}\n")
+        print(f"\nPikkaDataBot: {response}\n")
 
 
 if __name__ == "__main__":
