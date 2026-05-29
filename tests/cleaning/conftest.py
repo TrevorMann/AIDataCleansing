@@ -6,9 +6,20 @@ import pytest
 
 
 @pytest.fixture
-def tmp_db():
-    """Yield a path to a fresh, isolated SQLite DB initialized with the full schema."""
-    from database import init_db
+def tmp_db(monkeypatch):
+    """Yield a path to a fresh, isolated SQLite DB initialized with the full schema.
+
+    Pins DB_BACKEND=sqlite for the duration of the test so the db.helpers and
+    db.schema_discovery dispatchers route to the SQLite backend regardless of the
+    .env default (which is postgres). Only DB_BACKEND is overridden; all other
+    config values are left intact and the change is reverted after the test.
+    """
+    import config
+    from db.sqlite_init import init_db
+
+    config.get_config_value("DB_BACKEND")  # ensure _ENV_CACHE is populated
+    monkeypatch.setitem(config._ENV_CACHE, "DB_BACKEND", "sqlite")
+
     with tempfile.TemporaryDirectory() as tmpdir:
         path = os.path.join(tmpdir, "test.db")
         init_db(path)

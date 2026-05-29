@@ -11,7 +11,7 @@ from typing import Any
 
 from cleaning.cache import WebSearchCache
 from cleaning.llm_client import Clients
-from db_helpers import (
+from db.helpers import (
     delete_raw_data, get_cleaned_data_for_raw, get_raw_data_by_id,
     insert_raw_data, query_records, update_cleaned_data, update_raw_data,
 )
@@ -20,7 +20,7 @@ from guardrails import (
     check_delete_not_bulk, check_nl_phone_format, check_no_wildcard_update,
     check_protected_fields, check_usa_state,
 )
-from schema_discovery import get_column_metadata, get_table_schema
+from db.schema_discovery import get_column_metadata, get_table_schema
 
 
 logger = logging.getLogger(__name__)

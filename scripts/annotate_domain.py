@@ -27,11 +27,21 @@ def main() -> None:
                         help="Show unannotated columns without writing")
     args = parser.parse_args()
 
+    from services.domain_initializer import DomainInitializer
+    di = DomainInitializer(args.domain)
+    tables = di.get_registered_tables()
+    if not tables:
+        print(
+            f"Domain '{args.domain}' has no registered tables.\n"
+            f"Run: python scripts/initialize_domain.py --domain {args.domain}"
+        )
+        sys.exit(1)
+
     conn = get_db_connection("")
 
     if args.dry_run:
         svc = MetadataAnnotationService(llm_client=None)
-        gaps = svc.list_gaps(args.domain, conn)
+        gaps = svc.list_gaps(args.domain, conn, tables)
         if not gaps:
             print(f"No annotation gaps found for domain '{args.domain}'.")
             return
@@ -42,7 +52,7 @@ def main() -> None:
 
     svc = MetadataAnnotationService(llm_client=_build_llm_client())
     print(f"Annotating {args.domain}...")
-    report = svc.run(args.domain, conn, force=args.force)
+    report = svc.run(args.domain, conn, tables, force=args.force)
 
     print(f"\nDone: {report.annotated} annotated, {report.skipped} skipped", end="")
     if report.low_confidence:

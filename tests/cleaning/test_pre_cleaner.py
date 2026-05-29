@@ -1,4 +1,10 @@
 """Unit tests for cleaning.pre_cleaner. Pure-Python, no fixtures needed."""
+import pytest
+
+# cleaning.pre_cleaner was retired (legacy hardcoded country logic, superseded by the
+# _common skills + orchestrator_v2). Skip this whole module rather than delete it.
+pytest.importorskip("cleaning.pre_cleaner", reason="pre_cleaner retired; superseded by _common skills")
+
 from cleaning.pre_cleaner import (
     get_country_code, clean_name, clean_city, clean_address,
     expand_country, expand_state_province, normalize_postal,

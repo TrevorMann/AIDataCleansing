@@ -25,7 +25,6 @@ class AnnotationReport:
 
 
 class MetadataAnnotationService:
-    DEFAULT_TABLES = ["raw_data", "cleaned_data"]
     LOW_CONFIDENCE_THRESHOLD = 0.70
     ANNOTATION_SYSTEM = "You are a database column annotator. Output JSON only."
 
@@ -34,9 +33,11 @@ class MetadataAnnotationService:
 
     # ── Public API ──────────────────────────────────────────────────────────
 
-    def list_gaps(self, domain: str, conn, tables: list[str] = None) -> list[dict]:
-        """Return [{table_name, column_name}] lacking annotation for domain."""
-        tables = tables or self.DEFAULT_TABLES
+    def list_gaps(self, domain: str, conn, tables: list[str]) -> list[dict]:
+        """Return [{table_name, column_name}] lacking annotation for domain.
+
+        tables must be provided explicitly — use DomainInitializer(domain).get_registered_tables().
+        """
         existing = self._get_existing_annotations(domain, conn)
         gaps = []
         for table in tables:
@@ -49,15 +50,17 @@ class MetadataAnnotationService:
         self,
         domain: str,
         conn,
+        tables: list[str],
         force: bool = False,
-        tables: list[str] = None,
     ) -> AnnotationReport:
-        """Annotate unannotated columns for domain. Skips existing unless force=True."""
+        """Annotate unannotated columns for domain. Skips existing unless force=True.
+
+        tables must be provided explicitly — use DomainInitializer(domain).get_registered_tables().
+        """
         if self._llm is None:
             raise ValueError(
                 "llm_client is required to annotate; use list_gaps() for dry-run discovery."
             )
-        tables = tables or self.DEFAULT_TABLES
         try:
             sr = SeederRegistry(domain)
             domain_description = sr.manifest.get("description", domain)

@@ -1,5 +1,11 @@
 """Orchestrator for the cleaning workflow.
 
+DEAD CODE — RETIRED. This v1 orchestrator depends on the deleted ``pre_cleaner``
+module (legacy hardcoded country logic) and no longer imports. It is superseded by
+``cleaning.orchestrator_v2`` (run_cleaning_workflow_v2 / OrchestrationTeam), which
+the CLI and pipeline use. Kept on disk for reference only; not wired into the
+package API. Do not import from here.
+
 This module's responsibilities:
 - Interpret the user query into filters
 - Fetch matching raw records
@@ -27,10 +33,10 @@ from cleaning.llm_client import Clients, build_clients
 from cleaning.pre_cleaner import get_country_code, pre_clean_record
 from cleaning.types import CleaningOutput, CleaningRunReport
 from config import DB_PATH as DEFAULT_DB_PATH
-from db_helpers import insert_audit_log, insert_cleaned_data, query_records
+from db.helpers import insert_audit_log, insert_cleaned_data, query_records
 from prompts import build_system_prompt
 from prompts.research import build_research_prompt
-from schema_discovery import format_schema_for_prompt
+from db.schema_discovery import format_schema_for_prompt
 
 
 logger = logging.getLogger(__name__)

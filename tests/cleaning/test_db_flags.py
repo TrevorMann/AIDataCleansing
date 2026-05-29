@@ -33,7 +33,7 @@ def test_unresolved_index_exists(tmp_db):
 
 
 def test_insert_flag_returns_id(tmp_db):
-    from db_helpers import insert_raw_data, insert_flag
+    from db.helpers import insert_raw_data, insert_flag
     raw_id = insert_raw_data(tmp_db, name="x", country="CA")
     flag_id = insert_flag(
         tmp_db,
@@ -45,7 +45,7 @@ def test_insert_flag_returns_id(tmp_db):
 
 
 def test_query_flags_unresolved_only(tmp_db):
-    from db_helpers import insert_raw_data, insert_flag, update_flag_resolution, query_flags
+    from db.helpers import insert_raw_data, insert_flag, update_flag_resolution, query_flags
     raw_id = insert_raw_data(tmp_db, name="x", country="CA")
     f1 = insert_flag(tmp_db, raw_data_id=raw_id, flag_type="t", severity="WARN",
                      reason="r1", raised_by="agent:CA")

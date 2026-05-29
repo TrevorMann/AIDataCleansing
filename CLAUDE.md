@@ -156,27 +156,41 @@ result = team.process_record(record)
 
 ## Add a New Industry / Domain
 
+**Primary path — `initialize_domain.py`.** A single orchestrator that walks the
+schema-first flow against your existing database (see
+`docs/runbooks/initialize-domain.md` for a full step-by-step runbook):
+
 ```bash
-# 1. Scaffold skeleton
-python scripts/scaffold_domain.py --domain sports_ticketing
+# Full first-time initialization (interactive, 4 phases)
+python scripts/initialize_domain.py --domain sports_ticketing
+#   Phase 0  Table Registration   — pick which DB tables belong to the domain → domain_registry.json
+#   Phase 1  Schema Discovery      — read columns/types/PKs for the registered tables
+#   Phase 2  Annotation            — LLM describes each column (writes column_metadata)
+#   Phase 3  Seed Research         — samples real data + Q&A → spell_corrections / query_packs / column_metadata seeds
 
-# 2. Generate seed files via LLM-assisted Q&A (recommended)
-python scripts/research_domain.py --domain sports_ticketing
-#    Asks about entity type, fields, spelling issues, linking fields, gap types, trusted sources.
-#    Generates: spell_corrections.csv, query_packs.yaml, column_metadata.yaml
-#    Use --dry-run to preview without writing.
+# Register tables added to the DB after the initial run
+python scripts/initialize_domain.py --domain sports_ticketing add_table
 
-# 3. Wire skills in skills/sports_ticketing/skills.yaml
-#    - Copy _common skill entries from real_estate reference, adjust config
-#    - Add domain-specific skills only for logic that is truly domain-specific
+# Re-run Phase 3 only (e.g. after data is ingested into previously-empty tables)
+python scripts/initialize_domain.py --domain sports_ticketing --refresh-seeds
 
-# 4. Declare seeders in seeders/sports_ticketing/manifest.yaml
-
-# 5. Seed, annotate, verify
-python scripts/init_data.py --domain sports_ticketing --dry-run
-python scripts/init_data.py --domain sports_ticketing
-python scripts/annotate_domain.py --domain sports_ticketing
+# Reset init state so the domain can be re-initialized (iterative testing).
+# Removes column_metadata/spell_corrections/query_pattern_memory/source_registry rows,
+# the 'tables' entry in domain_registry.json, and (optionally) generated seed files.
+# Does NOT drop your actual data tables.
+python scripts/initialize_domain.py --domain sports_ticketing teardown
 ```
+
+You still wire skills manually after initialization:
+- Wire skills in `skills/sports_ticketing/skills.yaml` (copy `_common` entries from the
+  real_estate reference, adjust config; add domain-specific skills only for truly
+  domain-specific logic).
+- Declare seeders in `seeders/sports_ticketing/manifest.yaml`.
+
+**Lower-level scripts** (still independently runnable; `initialize_domain.py` orchestrates them):
+`scripts/scaffold_domain.py`, `scripts/research_domain.py`, `scripts/init_data.py`,
+`scripts/annotate_domain.py`. `annotate_domain.py` now requires the domain's tables to be
+registered first (it reads them from `domain_registry.json`).
 
 ## Architecture
 

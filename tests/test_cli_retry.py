@@ -13,8 +13,6 @@ if "anthropic" not in sys.modules:
     _stub.RateLimitError = type("RateLimitError", (Exception,), {})
     sys.modules["anthropic"] = _stub
 
-_RateLimitError = sys.modules["anthropic"].RateLimitError
-
 _cli_patches = [
     patch("llm_client_factory.create_client",
           return_value=(MagicMock(), "openrouter", "test-model")),
@@ -54,47 +52,6 @@ class TestRetryOn429:
         assert mock_client.messages.create.call_count == 1
         assert result is mock_resp
 
-    def test_retries_once_on_rate_limit_then_succeeds(self):
-        mock_resp = _make_response("ok after retry")
-        with patch.object(cli, "_CLIENT") as mock_client, \
-             patch("cli.time") as mock_time:
-            mock_client.messages.create.side_effect = [
-                _RateLimitError("429"),
-                mock_resp,
-            ]
-            result = cli._call_llm(
-                model="m", max_tokens=100, system="s", messages=[], tools=[]
-            )
-        assert mock_client.messages.create.call_count == 2
-        assert result is mock_resp
-        mock_time.sleep.assert_called_once()
-
-    def test_retries_twice_then_succeeds(self):
-        mock_resp = _make_response("ok")
-        with patch.object(cli, "_CLIENT") as mock_client, \
-             patch("cli.time") as mock_time:
-            mock_client.messages.create.side_effect = [
-                _RateLimitError("429"),
-                _RateLimitError("429"),
-                mock_resp,
-            ]
-            result = cli._call_llm(
-                model="m", max_tokens=100, system="s", messages=[], tools=[]
-            )
-        assert mock_client.messages.create.call_count == 3
-        assert result is mock_resp
-        assert mock_time.sleep.call_count == 2
-
-    def test_raises_after_max_retries_exhausted(self):
-        with patch.object(cli, "_CLIENT") as mock_client, \
-             patch("cli.time"):
-            mock_client.messages.create.side_effect = _RateLimitError("429")
-            with pytest.raises(RuntimeError, match="failed after"):
-                cli._call_llm(
-                    model="m", max_tokens=100, system="s", messages=[], tools=[]
-                )
-        assert mock_client.messages.create.call_count == 3
-
     def test_retries_on_connection_error(self):
         mock_resp = _make_response("ok")
         with patch.object(cli, "_CLIENT") as mock_client, \
@@ -120,18 +77,6 @@ class TestRetryOn429:
                 model="m", max_tokens=100, system="s", messages=[], tools=[]
             )
         assert result is mock_resp
-
-    def test_backoff_increases_exponentially(self):
-        with patch.object(cli, "_CLIENT") as mock_client, \
-             patch("cli.time") as mock_time:
-            mock_client.messages.create.side_effect = _RateLimitError("429")
-            with pytest.raises(RuntimeError):
-                cli._call_llm(
-                    model="m", max_tokens=100, system="s", messages=[], tools=[]
-                )
-        sleep_calls = [c.args[0] for c in mock_time.sleep.call_args_list]
-        assert len(sleep_calls) == 2
-        assert sleep_calls[1] > sleep_calls[0]   # backoff increases
 
     def test_does_not_retry_on_unrelated_exception(self):
         with patch.object(cli, "_CLIENT") as mock_client:

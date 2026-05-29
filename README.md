@@ -102,52 +102,41 @@ python -m pytest tests/ -v
 
 No pipeline code changes needed. The framework discovers skills and seeders from each domain's YAML files.
 
-### Recommended: LLM-assisted path
+### Recommended: `initialize_domain.py` orchestrator
 
-The domain researcher asks 6-7 questions about your industry, then calls the LLM to generate the initial seed files for you. Review and approve before anything is written.
+A single schema-first orchestrator that reads your existing database and walks four
+interactive phases. Full step-by-step instructions (Postgres + SQLite) live in
+[`docs/runbooks/initialize-domain.md`](docs/runbooks/initialize-domain.md).
 
 ```bash
-# 1. Scaffold the skeleton
-python scripts/scaffold_domain.py --domain sports_ticketing
+python scripts/initialize_domain.py --domain sports_ticketing
+#   Phase 0  Table Registration  — choose which DB tables belong to the domain → domain_registry.json
+#   Phase 1  Schema Discovery     — read columns / types / PKs for those tables
+#   Phase 2  Annotation           — LLM describes each column → column_metadata
+#   Phase 3  Seed Research         — samples real data + Q&A → seed files, then loads them
 
-# 2. Run the domain researcher (generates seed files via Q&A + LLM)
-python scripts/research_domain.py --domain sports_ticketing
-
-#    The researcher will ask:
-#      - What kind of records does this domain clean?
-#      - What are the main data fields?
-#      - Which fields have spelling/capitalization issues?
-#      - What uniquely identifies a record (linking fields)?
-#      - What data quality gaps need web search?
-#      - Which authoritative websites to search?
-#    Then preview the generated content and confirm before writing.
-
-# 3. Review and adjust the generated files (most cases: minor tweaks only)
-#    data/seeds/sports_ticketing/spell_corrections.csv
-#    data/seeds/sports_ticketing/query_packs.yaml
-#    data/seeds/sports_ticketing/column_metadata.yaml
-
-# 4. Declare seeders and any custom migrations
-#    Edit seeders/sports_ticketing/manifest.yaml
-
-# 5. Wire skills in skills/sports_ticketing/skills.yaml
-#    (copy _common skill entries from real_estate reference, adjust config)
-
-# 6. Seed, annotate, verify
-python scripts/init_data.py --domain sports_ticketing --dry-run
-python scripts/init_data.py --domain sports_ticketing
-python scripts/annotate_domain.py --domain sports_ticketing
-python scripts/init_data.py --domain sports_ticketing --dry-run   # should show 0 pending
+# Maintenance subcommands:
+python scripts/initialize_domain.py --domain sports_ticketing add_table       # register newly-added tables
+python scripts/initialize_domain.py --domain sports_ticketing --refresh-seeds # re-run Phase 3 only
+python scripts/initialize_domain.py --domain sports_ticketing teardown        # reset init state to re-run
 ```
 
-### Manual path (when you have existing data or want full control)
+Then wire skills in `skills/sports_ticketing/skills.yaml` (copy `_common` entries from the
+real_estate reference, adjust config) and declare seeders in
+`seeders/sports_ticketing/manifest.yaml`.
+
+### Manual path (lower-level scripts)
+
+The orchestrator drives these; run them directly for full control. Note
+`annotate_domain.py` now reads the domain's tables from `domain_registry.json`, so the
+domain must be registered (Phase 0, or `initialize_domain.py`) first.
 
 ```bash
-# 1. Scaffold
-python scripts/scaffold_domain.py --domain sports_ticketing
-
-# 2. Edit generated stubs directly — see field guide below
-# 3. Seed and annotate (same as above steps 6)
+python scripts/scaffold_domain.py --domain sports_ticketing     # skeleton dirs/files
+python scripts/research_domain.py --domain sports_ticketing     # Q&A + LLM → seed files
+python scripts/init_data.py --domain sports_ticketing --dry-run # preview seed load
+python scripts/init_data.py --domain sports_ticketing           # load seeds
+python scripts/annotate_domain.py --domain sports_ticketing     # annotate columns
 ```
 
 ---

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
-from db_helpers import insert_flag, query_flags
+from db.helpers import insert_flag, query_flags
 
 
 class FlagType(str, Enum):

@@ -53,7 +53,9 @@
       "Bash(/mnt/f/AI_learning_project/.venv-win/Scripts/python3 -m pytest tests/test_metadata_annotation.py -v)",
       "Bash(grep -E \"^/mnt/f/AI_learning_project/[^/]+\\\\.py$\")",
       "Skill(superpowers:systematic-debugging)",
-      "Bash(xargs basename -a)"
+      "Bash(xargs basename -a)",
+      "Bash(./.venv-win/Scripts/python.exe -m pytest tests/ -q -p no:cacheprovider)",
+      "Bash(./.venv-win/Scripts/python.exe -m pytest tests/cleaning/test_cache.py -q -p no:cacheprovider)"
     ]
   }
 }

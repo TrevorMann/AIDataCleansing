@@ -149,6 +149,8 @@ def test_cli_dry_run_prints_gaps(capsys):
     import scripts.annotate_domain as cli_module
 
     with patch.object(cli_module, "get_db_connection", return_value=MagicMock()), \
+         patch("services.domain_initializer.DomainInitializer.get_registered_tables",
+               return_value=["raw_data"]), \
          patch("services.metadata_annotation.MetadataAnnotationService.list_gaps",
                return_value=[{"table_name": "raw_data", "column_name": "city"}]), \
          patch("sys.argv", ["annotate_domain.py", "--domain", "real_estate", "--dry-run"]):
@@ -163,6 +165,8 @@ def test_cli_dry_run_no_gaps_message(capsys):
     import scripts.annotate_domain as cli_module
 
     with patch.object(cli_module, "get_db_connection", return_value=MagicMock()), \
+         patch("services.domain_initializer.DomainInitializer.get_registered_tables",
+               return_value=["raw_data"]), \
          patch("services.metadata_annotation.MetadataAnnotationService.list_gaps",
                return_value=[]), \
          patch("sys.argv", ["annotate_domain.py", "--domain", "real_estate", "--dry-run"]):
@@ -174,9 +178,22 @@ def test_cli_dry_run_no_gaps_message(capsys):
 
 # --- OrchestrationTeam annotation gap warnings ---
 
+import importlib.util
 import logging
+import sys
+import types as _types
+from pathlib import Path
 
-from cleaning.orchestrator_v2 import OrchestrationTeam
+# cleaning/__init__.py has legacy module-level imports (db_helpers, pre_cleaner, etc.)
+# that are not present in this environment. Load orchestrator_v2 directly from its
+# file path to bypass __init__.py entirely.
+_ORCH_PATH = Path(__file__).resolve().parent.parent / "cleaning" / "orchestrator_v2.py"
+_spec = importlib.util.spec_from_file_location("cleaning.orchestrator_v2", _ORCH_PATH)
+_orch_mod = importlib.util.module_from_spec(_spec)
+sys.modules["cleaning.orchestrator_v2"] = _orch_mod
+_spec.loader.exec_module(_orch_mod)
+OrchestrationTeam = _orch_mod.OrchestrationTeam
+
 from skills.registry import SkillRegistry
 
 
@@ -196,7 +213,9 @@ def test_orchestration_team_warns_on_annotation_gaps(caplog):
     ]
     registry.runtime = {"pg_conn": mock_conn}
 
-    with caplog.at_level(logging.WARNING, logger="cleaning.orchestrator_v2"):
+    with patch("services.domain_initializer.DomainInitializer.get_registered_tables",
+               return_value=["raw_data", "cleaned_data"]), \
+         caplog.at_level(logging.WARNING, logger="cleaning.orchestrator_v2"):
         OrchestrationTeam(registry)
 
     assert any("annotation" in msg.lower() for msg in caplog.messages)
@@ -218,7 +237,9 @@ def test_orchestration_team_no_warning_when_annotated(caplog):
     ]
     registry.runtime = {"pg_conn": mock_conn}
 
-    with caplog.at_level(logging.WARNING, logger="cleaning.orchestrator_v2"):
+    with patch("services.domain_initializer.DomainInitializer.get_registered_tables",
+               return_value=["raw_data", "cleaned_data"]), \
+         caplog.at_level(logging.WARNING, logger="cleaning.orchestrator_v2"):
         OrchestrationTeam(registry)
 
     assert not any("annotation" in msg.lower() for msg in caplog.messages)

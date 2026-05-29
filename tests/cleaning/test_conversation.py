@@ -79,7 +79,7 @@ def test_adhoc_insert_guardrail_blocks_invalid_age(tmp_db):
 
 def test_adhoc_delete_guardrail_blocks_without_confirm(tmp_db):
     """_delete_record returns GUARDRAIL BLOCKED when confirm != 'yes'."""
-    from db_helpers import insert_raw_data
+    from db.helpers import insert_raw_data
     from cleaning.conversation import AdHocConversation
     from cleaning.llm_client import Clients, LLMClient
     rid = insert_raw_data(tmp_db, name="to_delete", country="CA")

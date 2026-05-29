@@ -25,7 +25,7 @@ def test_stats_tracks_hits_misses_and_queries(mock_tavily):
     c.web_search_cached("foo")  # hit
     c.web_search_cached("bar")  # miss
     stats = c.stats()
-    assert stats == {"hits": 1, "misses": 2, "queries_cached": 2}
+    assert stats == {"hits": 1, "misses": 2,"pg_hits": 0, "queries_cached": 2}
 
 
 def test_errors_are_not_cached(mock_tavily):

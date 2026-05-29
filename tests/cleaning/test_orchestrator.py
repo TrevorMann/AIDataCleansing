@@ -5,6 +5,10 @@ Helper tests added in Task 11; workflow tests added in Task 12.
 from unittest.mock import MagicMock
 import pytest
 
+# The v1 orchestrator is retired (depends on the deleted pre_cleaner module and is
+# superseded by orchestrator_v2). These tests cover dead code — skipped, not deleted.
+pytestmark = pytest.mark.skip(reason="v1 orchestrator retired; superseded by orchestrator_v2")
+
 
 def test_detect_country_filter_explicit_override():
     from cleaning.orchestrator import detect_country_filter

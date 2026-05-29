@@ -99,6 +99,56 @@ _QUESTIONS = [
     ),
 ]
 
+# ── schema-filtered question pool ─────────────────────────────────────────────
+
+_Q_ENTITY_DESCRIPTION = Question(
+    key="entity_description",
+    prompt="What kind of records does this domain clean?",
+    hint="e.g. sports event tickets, customer profiles, purchase transactions",
+)
+_Q_GAP_TYPES = Question(
+    key="gap_types",
+    prompt="What data quality gaps typically require a web search to resolve?",
+    hint="e.g. unknown_team, unknown_venue, event_time_mismatch",
+)
+_Q_TRUSTED_SOURCES = Question(
+    key="trusted_sources",
+    prompt="Which authoritative websites should be searched for this domain? (comma-separated)",
+    hint="e.g. nhl.com, nba.com, ticketmaster.com, wikipedia.org",
+)
+_Q_INDUSTRY_CONTEXT = Question(
+    key="industry_context",
+    prompt="Any additional domain-specific context the LLM should know?",
+    hint="e.g. team name abbreviations, venue aliases — leave blank to skip",
+)
+_Q_TEXT_FIELDS = Question(
+    key="text_fields",
+    prompt="Which text fields most commonly have spelling or capitalization errors?",
+    hint="already detected from schema — add any context about error patterns",
+)
+_Q_TEAM_ALIASES = Question(
+    key="team_aliases",
+    prompt="What team name aliases and abbreviations are common in this domain?",
+    hint="e.g. Leafs=Toronto Maple Leafs, Habs=Montreal Canadiens, Sens=Ottawa Senators",
+)
+_Q_POSTAL_FORMAT = Question(
+    key="postal_format",
+    prompt="What postal/zip code formats are used, and which countries?",
+    hint="e.g. Canadian FSA (A1A 1A1), US ZIP (12345), both",
+)
+_Q_DATETIME_FORMAT = Question(
+    key="datetime_format",
+    prompt="What timezone context applies to date/time columns?",
+    hint="e.g. all times in ET, mixed timezones, UTC stored locally converted",
+)
+
+_TEXT_TYPES = frozenset({"text", "character varying", "varchar", "char", "character"})
+_TIMESTAMP_TYPES = frozenset({
+    "timestamp", "timestamptz", "timestamp with time zone",
+    "timestamp without time zone", "date",
+})
+_TEAM_WORDS = frozenset({"team", "player", "athlete", "club"})
+_POSTAL_WORDS = frozenset({"postal", "zip", "postcode", "zipcode"})
 
 # ── core researcher ───────────────────────────────────────────────────────────────
 
@@ -223,7 +273,16 @@ class DomainResearcher:
             max_tokens=4096,
             messages=[{"role": "user", "content": prompt}],
         )
-        return self.parse_llm_response(response.content[0].text)
+        text_block = next(
+            (block for block in response.content if hasattr(block, "text")),
+            None,
+        )
+        if text_block is None:
+            raise ValueError(
+                f"No text block found in LLM response. "
+                f"Block types received: {[type(b).__name__ for b in response.content]}"
+            )
+        return self.parse_llm_response(text_block.text)
 
     # ── file writing ──────────────────────────────────────────────────────────────
 
@@ -288,3 +347,137 @@ class DomainResearcher:
             written.append(str(meta_path))
 
         return written
+
+    # ── schema-aware methods ──────────────────────────────────────────────────────
+
+    def get_filtered_questions(self, schema: Dict[str, List[Dict]]) -> List[Question]:
+        """Return Q&A questions relevant to the columns present in schema."""
+        all_col_names: set = set()
+        all_col_types: set = set()
+        for cols in schema.values():
+            for col in cols:
+                all_col_names.add(col["name"].lower())
+                all_col_types.add(col["type"].lower())
+
+        questions = [_Q_ENTITY_DESCRIPTION, _Q_GAP_TYPES, _Q_TRUSTED_SOURCES]
+
+        if all_col_types & _TEXT_TYPES:
+            questions.append(_Q_TEXT_FIELDS)
+
+        if any(word in col for col in all_col_names for word in _TEAM_WORDS):
+            questions.append(_Q_TEAM_ALIASES)
+
+        if any(word in col for col in all_col_names for word in _POSTAL_WORDS):
+            questions.append(_Q_POSTAL_FORMAT)
+
+        if all_col_types & _TIMESTAMP_TYPES:
+            questions.append(_Q_DATETIME_FORMAT)
+
+        questions.append(_Q_INDUSTRY_CONTEXT)
+        return questions
+
+    def build_schema_prompt(
+        self,
+        schema: Dict[str, List[Dict]],
+        annotations: Dict[str, str],
+        data_samples: Dict[str, List],
+        answers: Dict[str, str],
+    ) -> str:
+        """Build LLM prompt grounded in schema, annotations, and actual data samples."""
+        schema_lines = []
+        for table, cols in schema.items():
+            schema_lines.append(f"\nTable: {table}")
+            for col in cols:
+                ann = annotations.get(f"{table}.{col['name']}", "")
+                ann_note = f"  — {ann}" if ann else ""
+                sample_key = f"{table}.{col['name']}"
+                samples = data_samples.get(sample_key, [])
+                if samples:
+                    sample_note = f"  [samples: {', '.join(str(s) for s in samples[:5])}]"
+                else:
+                    sample_note = "  [no data yet]"
+                schema_lines.append(
+                    f"  {col['name']} ({col['type']}){ann_note}{sample_note}"
+                )
+        schema_block = "\n".join(schema_lines)
+
+        answers_text = "\n".join(
+            f"  {k}: {v}" for k, v in answers.items() if v
+        )
+
+        return textwrap.dedent(f"""
+            You are a data quality expert helping initialize a new data cleaning domain.
+
+            Domain: {self.domain}
+
+            === ACTUAL DATABASE SCHEMA (use these exact column names) ===
+            {schema_block}
+
+            === USER CONTEXT ===
+            {answers_text}
+
+            Generate seed content for this domain. Use ONLY the column names shown above.
+            Respond with a single JSON object (no markdown, no explanation outside JSON)
+            with exactly these keys:
+
+            {{
+              "spell_corrections": [
+                {{"wrong": "misspelled", "right": "correct", "confidence": 0.95}},
+                ...  // 15-25 evidence-based corrections for text columns that have data samples above
+                     // SKIP columns with [no data yet] — do not guess
+              ],
+              "query_packs": [
+                {{
+                  "gap_type": "gap_type_key",
+                  "seed_queries": [
+                    "query template using {{field_name}} placeholders matching schema above",
+                    ...
+                  ]
+                }},
+                ...
+              ],
+              "column_descriptions": [
+                {{
+                  "column_name": "exact_column_name_from_schema",
+                  "description": "what this field contains",
+                  "example_values": ["example1", "example2"],
+                  "data_type": "text|date|phone|email|numeric|code"
+                }},
+                ...
+              ]
+            }}
+
+            Rules:
+            - spell_corrections: only for columns that have data samples shown above
+            - column names in column_descriptions must exactly match names in the schema above
+            - gap_type keys must be valid Python identifiers (lowercase, underscores)
+            - {{field_name}} placeholders in seed_queries must match column names from schema
+            - confidence values must be 0.0-1.0
+            - data_type must be exactly one of: text, date, phone, email, numeric, code
+        """).strip()
+
+    def research_with_schema(
+        self,
+        answers: Dict[str, str],
+        schema: Dict[str, List[Dict]],
+        annotations: Dict[str, str],
+        data_samples: Dict[str, List],
+        llm_client: Any,
+        model: str,
+    ) -> ResearchBundle:
+        """Research with schema context — grounded in actual columns and data samples."""
+        prompt = self.build_schema_prompt(schema, annotations, data_samples, answers)
+        response = llm_client.messages.create(
+            model=model,
+            max_tokens=4096,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text_block = next(
+            (block for block in response.content if hasattr(block, "text")), None
+        )
+        if text_block is None:
+            raise ValueError(
+                f"No text block in LLM response. "
+                f"Block types: {[type(b).__name__ for b in response.content]}"
+            )
+        return self.parse_llm_response(text_block.text)

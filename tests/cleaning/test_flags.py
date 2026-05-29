@@ -34,7 +34,7 @@ def test_flag_dataclass_construction():
 
 
 def test_persist_flags_writes_each_flag(tmp_db):
-    from db_helpers import insert_raw_data
+    from db.helpers import insert_raw_data
     raw_id = insert_raw_data(tmp_db, name="x", country="CA")
     flags = [
         Flag(FlagType.POSTAL_UNRESOLVED, FlagSeverity.NEEDS_REVIEW, "r1", "agent:CA"),
@@ -46,7 +46,7 @@ def test_persist_flags_writes_each_flag(tmp_db):
 
 
 def test_query_unresolved_flags(tmp_db):
-    from db_helpers import insert_raw_data
+    from db.helpers import insert_raw_data
     raw_id = insert_raw_data(tmp_db, name="x", country="CA")
     persist_flags(tmp_db, raw_data_id=raw_id, cleaned_data_id=None, flags=[
         Flag(FlagType.POSTAL_UNRESOLVED, FlagSeverity.NEEDS_REVIEW, "r", "agent:CA"),

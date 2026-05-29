@@ -62,8 +62,12 @@ class OrchestrationTeam:
         if not conn or not domain:
             return
         try:
+            from services.domain_initializer import DomainInitializer
             from services.metadata_annotation import MetadataAnnotationService
-            gaps = MetadataAnnotationService(llm_client=None).list_gaps(domain, conn)
+            tables = DomainInitializer(domain).get_registered_tables()
+            if not tables:
+                return  # domain not yet registered — skip warning
+            gaps = MetadataAnnotationService(llm_client=None).list_gaps(domain, conn, tables)
             if gaps:
                 logger.warning(
                     "%d column(s) in '%s' have no annotations. "

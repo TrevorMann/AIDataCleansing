@@ -319,3 +319,146 @@ class TestResearchWithMockedLLM:
         call_kwargs = mock_client.messages.create.call_args
         messages = call_kwargs[1]["messages"] if call_kwargs[1] else call_kwargs[0][1]
         assert any("sports_ticketing" in str(m) for m in messages)
+
+
+import json as _json
+
+_SCHEMA = {
+    "events": [
+        {"name": "event_id",       "type": "uuid",         "notnull": True,  "pk": True},
+        {"name": "event_name",     "type": "text",         "notnull": False, "pk": False},
+        {"name": "home_team",      "type": "text",         "notnull": False, "pk": False},
+        {"name": "start_datetime", "type": "timestamptz",  "notnull": False, "pk": False},
+    ],
+    "customers": [
+        {"name": "customer_id",    "type": "uuid",         "notnull": True,  "pk": True},
+        {"name": "postal_code",    "type": "text",         "notnull": False, "pk": False},
+        {"name": "city",           "type": "text",         "notnull": False, "pk": False},
+    ],
+}
+_ANNOTATIONS = {
+    "events.event_name":     "Name of the sports event",
+    "events.home_team":      "Home team name",
+    "customers.postal_code": "Customer postal/zip code",
+}
+_SAMPLES = {
+    "events.home_team":      ["Leafs", "Raptors", "Blue Jays"],
+    "events.event_name":     ["Leafs vs Sens", "Raptors vs Celtics"],
+    "customers.postal_code": [],
+}
+
+
+class TestGetFilteredQuestions:
+    def test_always_includes_gap_types_question(self):
+        r = DomainResearcher(domain="sports_ticketing")
+        questions = r.get_filtered_questions(_SCHEMA)
+        keys = {q.key for q in questions}
+        assert "gap_types" in keys
+
+    def test_always_includes_trusted_sources_question(self):
+        r = DomainResearcher(domain="sports_ticketing")
+        questions = r.get_filtered_questions(_SCHEMA)
+        keys = {q.key for q in questions}
+        assert "trusted_sources" in keys
+
+    def test_includes_team_aliases_when_team_column_exists(self):
+        r = DomainResearcher(domain="sports_ticketing")
+        questions = r.get_filtered_questions(_SCHEMA)
+        keys = {q.key for q in questions}
+        assert "team_aliases" in keys
+
+    def test_includes_postal_format_when_postal_column_exists(self):
+        r = DomainResearcher(domain="sports_ticketing")
+        questions = r.get_filtered_questions(_SCHEMA)
+        keys = {q.key for q in questions}
+        assert "postal_format" in keys
+
+    def test_includes_datetime_format_when_timestamp_column_exists(self):
+        r = DomainResearcher(domain="sports_ticketing")
+        questions = r.get_filtered_questions(_SCHEMA)
+        keys = {q.key for q in questions}
+        assert "datetime_format" in keys
+
+    def test_skips_postal_when_no_postal_column(self):
+        r = DomainResearcher(domain="sports_ticketing")
+        schema_no_postal = {
+            "events": [{"name": "event_name", "type": "text", "notnull": False, "pk": False}]
+        }
+        questions = r.get_filtered_questions(schema_no_postal)
+        keys = {q.key for q in questions}
+        assert "postal_format" not in keys
+
+    def test_skips_team_aliases_when_no_team_column(self):
+        r = DomainResearcher(domain="sports_ticketing")
+        schema_no_team = {
+            "customers": [{"name": "email", "type": "text", "notnull": False, "pk": False}]
+        }
+        questions = r.get_filtered_questions(schema_no_team)
+        keys = {q.key for q in questions}
+        assert "team_aliases" not in keys
+
+
+class TestBuildSchemaPrompt:
+    def test_prompt_includes_schema_summary(self):
+        r = DomainResearcher(domain="sports_ticketing")
+        prompt = r.build_schema_prompt(_SCHEMA, _ANNOTATIONS, _SAMPLES, {})
+        assert "events" in prompt
+        assert "home_team" in prompt
+
+    def test_prompt_includes_annotation_descriptions(self):
+        r = DomainResearcher(domain="sports_ticketing")
+        prompt = r.build_schema_prompt(_SCHEMA, _ANNOTATIONS, _SAMPLES, {})
+        assert "Name of the sports event" in prompt
+
+    def test_prompt_includes_data_samples(self):
+        r = DomainResearcher(domain="sports_ticketing")
+        prompt = r.build_schema_prompt(_SCHEMA, _ANNOTATIONS, _SAMPLES, {})
+        assert "Leafs" in prompt or "Raptors" in prompt
+
+    def test_prompt_notes_empty_sample_columns(self):
+        r = DomainResearcher(domain="sports_ticketing")
+        prompt = r.build_schema_prompt(_SCHEMA, _ANNOTATIONS, _SAMPLES, {})
+        # postal_code has 0 samples — should be noted
+        assert "postal_code" in prompt
+
+
+class TestResearchWithSchema:
+    def test_returns_research_bundle(self):
+        r = DomainResearcher(domain="sports_ticketing")
+        answers = {
+            "gap_types": "unknown_team, unknown_venue",
+            "trusted_sources": "nhl.com, ticketmaster.com",
+            "industry_context": "",
+        }
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text=_VALID_LLM_RESPONSE)]
+        mock_client.messages.create.return_value = mock_response
+
+        bundle = r.research_with_schema(
+            answers=answers,
+            schema=_SCHEMA,
+            annotations=_ANNOTATIONS,
+            data_samples=_SAMPLES,
+            llm_client=mock_client,
+            model="claude-test",
+        )
+        assert isinstance(bundle, ResearchBundle)
+        mock_client.messages.create.assert_called_once()
+
+    def test_schema_context_appears_in_llm_prompt(self):
+        r = DomainResearcher(domain="sports_ticketing")
+        answers = {"gap_types": "x", "trusted_sources": "y", "industry_context": ""}
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text=_VALID_LLM_RESPONSE)]
+        mock_client.messages.create.return_value = mock_response
+
+        r.research_with_schema(
+            answers=answers, schema=_SCHEMA, annotations=_ANNOTATIONS,
+            data_samples=_SAMPLES, llm_client=mock_client, model="test",
+        )
+        call_args = mock_client.messages.create.call_args
+        messages = call_args[1].get("messages") or call_args[0][1]
+        content = str(messages)
+        assert "home_team" in content or "events" in content

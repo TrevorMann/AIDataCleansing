@@ -9,7 +9,8 @@
       "sub_categories": ["CA", "USA", "NL", "MX", "JP"],
       "prompt_module": "prompts.domains.real_estate",
       "skills_path": "skills/real_estate/skills.yaml",
-      "seeders_path": "seeders/real_estate/manifest.yaml"
+      "seeders_path": "seeders/real_estate/manifest.yaml",
+      "tables": ["raw_data", "cleaned_data"]
     }
   }
 }
