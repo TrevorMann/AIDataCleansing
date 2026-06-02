@@ -272,10 +272,11 @@ Every processed field produces one audit entry via `skill.get_audit()`. Sensitiv
 | Type | Convention patterns | Key rules |
 |---|---|---|
 | `gender` | `gender`, `sex` | Normalize to Male/Female/Non-binary/Unknown; reject single letters |
-| `address` | `address`, `addr`, `street*` | Expand abbreviations; flag P.O. boxes |
 | `city` | `city`, `town`, `suburb` | Title case; flag numeric values |
 | `postal_code` | `postal*`, `zip*`, `postcode` | Country-aware format validation |
 | `country` | `country`, `nation`, `country_code` | Normalize to ISO 3166-1 alpha-2 |
+
+`address` is intentionally excluded from this skill. Address cleaning is handled by the existing `address_standardizer` skill. That skill has a known limitation (ambiguous abbreviations such as "St" → "Street" vs "Saint") that will be addressed in a future design iteration using a candidate-expansion and validation approach.
 
 ---
 
@@ -290,11 +291,13 @@ Follows existing migration naming convention. Idempotent (`CREATE TABLE IF NOT E
 ## What Gets Scrapped
 
 - `skills/real_estate/data_quality_triage/` — replaced by `_common/data_quality_triage` (already exists)
-- `skills/real_estate/geographic_validator/` — geography validation moves into `postal_code` and `country` rules + LLM guardrails
+- `skills/real_estate/geographic_validator/` — removed; postal code format and country validation now handled by `postal_code` and `country` rules in this skill. Province/state hierarchy checking is deferred to a future design iteration.
 - `skills/sports_ticketing/event_normalizer/` — team alias normalization moves to `learned_field_corrections` table seeded per domain
 - `skills/sports_ticketing/ticket_product_categorizer/` — out of scope for this skill; domain-specific categorization stays in domain skills
 
 The `_common` skills (spell_checker, address_standardizer, record_linker, data_quality_triage, skill_planner, web_search_enricher) are unchanged.
+
+`address_standardizer` remains in place as-is. Its abbreviation expansion logic ("St" → "Street") is a known blunt instrument — a future iteration will replace it with a candidate-expansion approach that generates all plausible expansions and validates against a reference source before committing to one. This is tracked as a separate design task.
 
 ---
 
@@ -302,3 +305,4 @@ The `_common` skills (spell_checker, address_standardizer, record_linker, data_q
 
 - Expose `learned_field_corrections` via a CLI command (`python scripts/manage_learned_rules.py --domain X`) for user to review/toggle — follow-up task
 - Convention pattern registry (list of patterns per type) — hard-coded in `resolver.py` initially; can move to config later if patterns need domain overrides
+- Address standardizer evolution — replace blind abbreviation expansion with a candidate-expansion + validation approach to eliminate ambiguous rewrites (e.g. "St" = "Street" vs "Saint"). Requires separate design session.
