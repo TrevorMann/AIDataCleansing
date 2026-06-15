@@ -2,6 +2,7 @@ from typing import Dict, List, Optional
 
 from db.pg_init import get_db_connection
 from db.pg_schema_discovery import get_all_schemas, get_table_schema
+from db.schema_config import get_framework_schema
 
 
 _AUTO_MANAGED_COLUMNS = {"id", "imported_at", "cleaned_at", "applied_at", "raised_at", "resolved_at", "updated_at"}
@@ -39,13 +40,17 @@ def insert_raw_data(
     country: Optional[str] = None,
     phone: Optional[str] = None,
     imported_by: Optional[str] = None,
+    schema: str = None,
 ) -> int:
+    if schema is None:
+        schema = get_framework_schema()
+
     conn = get_db_connection(db_path)
     try:
         cursor = conn.cursor()
         cursor.execute(
-            """
-            INSERT INTO raw_data (name, age, city, address, postal_code, municipality, state_province, country, phone, imported_by)
+            f"""
+            INSERT INTO {schema}.raw_data (name, age, city, address, postal_code, municipality, state_province, country, phone, imported_by)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
@@ -58,21 +63,27 @@ def insert_raw_data(
         conn.close()
 
 
-def get_raw_data_by_id(db_path: str, raw_data_id: int) -> Optional[Dict]:
+def get_raw_data_by_id(db_path: str, raw_data_id: int, schema: str = None) -> Optional[Dict]:
+    if schema is None:
+        schema = get_framework_schema()
+
     conn = get_db_connection(db_path)
     try:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM raw_data WHERE id = %s", (raw_data_id,))
+        cursor.execute(f"SELECT * FROM {schema}.raw_data WHERE id = %s", (raw_data_id,))
         return cursor.fetchone()
     finally:
         conn.close()
 
 
-def get_all_raw_data(db_path: str) -> List[Dict]:
+def get_all_raw_data(db_path: str, schema: str = None) -> List[Dict]:
+    if schema is None:
+        schema = get_framework_schema()
+
     conn = get_db_connection(db_path)
     try:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM raw_data ORDER BY imported_at DESC")
+        cursor.execute(f"SELECT * FROM {schema}.raw_data ORDER BY imported_at DESC")
         return list(cursor.fetchall())
     finally:
         conn.close()
@@ -95,13 +106,17 @@ def insert_cleaned_data(
     normalized_municipality: Optional[str] = None,
     confidence_score: Optional[float] = None,
     normalization_status: Optional[str] = None,
+    schema: str = None,
 ) -> int:
+    if schema is None:
+        schema = get_framework_schema()
+
     conn = get_db_connection(db_path)
     try:
         cursor = conn.cursor()
         cursor.execute(
-            """
-            INSERT INTO cleaned_data (raw_data_id, name, age, city, address, postal_code, municipality, state_province, country, phone, validation_notes, cleaned_by, normalized_municipality, confidence_score, normalization_status)
+            f"""
+            INSERT INTO {schema}.cleaned_data (raw_data_id, name, age, city, address, postal_code, municipality, state_province, country, phone, validation_notes, cleaned_by, normalized_municipality, confidence_score, normalization_status)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
@@ -137,13 +152,17 @@ def insert_audit_log(
     rule_applied: Optional[str] = None,
     description: Optional[str] = None,
     applied_by: Optional[str] = None,
+    schema: str = None,
 ) -> int:
+    if schema is None:
+        schema = get_framework_schema()
+
     conn = get_db_connection(db_path)
     try:
         cursor = conn.cursor()
         cursor.execute(
-            """
-            INSERT INTO audit_log (raw_data_id, cleaned_data_id, rule_applied, description, applied_by)
+            f"""
+            INSERT INTO {schema}.audit_log (raw_data_id, cleaned_data_id, rule_applied, description, applied_by)
             VALUES (%s, %s, %s, %s, %s)
             RETURNING id
             """,
@@ -156,40 +175,53 @@ def insert_audit_log(
         conn.close()
 
 
-def get_audit_log_for_record(db_path: str, raw_data_id: int) -> List[Dict]:
+def get_audit_log_for_record(db_path: str, raw_data_id: int, schema: str = None) -> List[Dict]:
+    if schema is None:
+        schema = get_framework_schema()
+
     conn = get_db_connection(db_path)
     try:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM audit_log WHERE raw_data_id = %s ORDER BY applied_at", (raw_data_id,))
+        cursor.execute(f"SELECT * FROM {schema}.audit_log WHERE raw_data_id = %s ORDER BY applied_at", (raw_data_id,))
         return list(cursor.fetchall())
     finally:
         conn.close()
 
 
-def update_raw_data(db_path: str, record_id: int, fields: Dict) -> bool:
-    return update_row(db_path, "raw_data", record_id, fields, protected_fields={"imported_at"})
+def update_raw_data(db_path: str, record_id: int, fields: Dict, schema: str = None) -> bool:
+    if schema is None:
+        schema = get_framework_schema()
+    return update_row(db_path, "raw_data", record_id, fields, protected_fields={"imported_at"}, schema=schema)
 
 
-def update_cleaned_data(db_path: str, record_id: int, fields: Dict) -> bool:
-    return update_row(db_path, "cleaned_data", record_id, fields, protected_fields={"raw_data_id", "cleaned_at"})
+def update_cleaned_data(db_path: str, record_id: int, fields: Dict, schema: str = None) -> bool:
+    if schema is None:
+        schema = get_framework_schema()
+    return update_row(db_path, "cleaned_data", record_id, fields, protected_fields={"raw_data_id", "cleaned_at"}, schema=schema)
 
 
-def delete_raw_data(db_path: str, record_id: int) -> bool:
+def delete_raw_data(db_path: str, record_id: int, schema: str = None) -> bool:
+    if schema is None:
+        schema = get_framework_schema()
+
     conn = get_db_connection(db_path)
     try:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM raw_data WHERE id = %s", (record_id,))
+        cursor.execute(f"DELETE FROM {schema}.raw_data WHERE id = %s", (record_id,))
         conn.commit()
         return cursor.rowcount > 0
     finally:
         conn.close()
 
 
-def get_cleaned_data_for_raw(db_path: str, raw_data_id: int) -> List[Dict]:
+def get_cleaned_data_for_raw(db_path: str, raw_data_id: int, schema: str = None) -> List[Dict]:
+    if schema is None:
+        schema = get_framework_schema()
+
     conn = get_db_connection(db_path)
     try:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM cleaned_data WHERE raw_data_id = %s", (raw_data_id,))
+        cursor.execute(f"SELECT * FROM {schema}.cleaned_data WHERE raw_data_id = %s", (raw_data_id,))
         return list(cursor.fetchall())
     finally:
         conn.close()
@@ -200,8 +232,11 @@ def query_records(
     table: str = "raw_data",
     filters: Optional[Dict] = None,
     limit: int = 50,
+    schema: str = None,
 ) -> List[Dict]:
-    return query_rows(db_path, table=table, filters=filters, limit=limit)
+    if schema is None:
+        schema = get_framework_schema()
+    return query_rows(db_path, table=table, filters=filters, limit=limit, schema=schema)
 
 
 def insert_flag(
@@ -212,13 +247,17 @@ def insert_flag(
     reason: str,
     raised_by: str,
     cleaned_data_id: Optional[int] = None,
+    schema: str = None,
 ) -> int:
+    if schema is None:
+        schema = get_framework_schema()
+
     conn = get_db_connection(db_path)
     try:
         cursor = conn.cursor()
         cursor.execute(
-            """
-            INSERT INTO flags (raw_data_id, cleaned_data_id, flag_type, severity, reason, raised_by)
+            f"""
+            INSERT INTO {schema}.flags (raw_data_id, cleaned_data_id, flag_type, severity, reason, raised_by)
             VALUES (%s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
@@ -236,13 +275,17 @@ def update_flag_resolution(
     flag_id: int,
     resolved_by: str,
     note: Optional[str] = None,
+    schema: str = None,
 ) -> bool:
+    if schema is None:
+        schema = get_framework_schema()
+
     conn = get_db_connection(db_path)
     try:
         cursor = conn.cursor()
         cursor.execute(
-            """
-            UPDATE flags SET resolved_at = CURRENT_TIMESTAMP, resolved_by = %s, resolution_note = %s
+            f"""
+            UPDATE {schema}.flags SET resolved_at = CURRENT_TIMESTAMP, resolved_by = %s, resolution_note = %s
             WHERE id = %s AND resolved_at IS NULL
             """,
             (resolved_by, note, flag_id),
@@ -259,7 +302,11 @@ def query_flags(
     raw_data_id: Optional[int] = None,
     flag_type: Optional[str] = None,
     limit: int = 100,
+    schema: str = None,
 ) -> List[Dict]:
+    if schema is None:
+        schema = get_framework_schema()
+
     where = []
     params: list = []
     if only_unresolved:
@@ -271,7 +318,7 @@ def query_flags(
         where.append("flag_type = %s")
         params.append(flag_type)
 
-    sql = "SELECT * FROM flags"
+    sql = f"SELECT * FROM {schema}.flags"
     if where:
         sql += " WHERE " + " AND ".join(where)
     sql += " ORDER BY raised_at DESC LIMIT %s"
@@ -286,11 +333,14 @@ def query_flags(
         conn.close()
 
 
-def get_already_cleaned_ids(db_path: str) -> set[int]:
+def get_already_cleaned_ids(db_path: str, schema: str = None) -> set[int]:
+    if schema is None:
+        schema = get_framework_schema()
+
     conn = get_db_connection(db_path)
     try:
         cursor = conn.cursor()
-        cursor.execute("SELECT DISTINCT raw_data_id FROM cleaned_data")
+        cursor.execute(f"SELECT DISTINCT raw_data_id FROM {schema}.cleaned_data")
         return {int(row["raw_data_id"]) for row in cursor.fetchall()}
     finally:
         conn.close()
@@ -302,13 +352,17 @@ def insert_row(
     values: Dict,
     *,
     protected_fields: set[str] | None = None,
+    schema: str = None,
 ) -> int:
+    if schema is None:
+        schema = get_framework_schema()
+
     schema_map = _get_schema_map(db_path, table)
     _validate_fields(db_path, table, values, protected_fields=protected_fields)
     columns = list(values)
     placeholders = ", ".join("%s" for _ in columns)
     returning = " RETURNING id" if "id" in schema_map else ""
-    sql = f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({placeholders}){returning}"
+    sql = f"INSERT INTO {schema}.{table} ({', '.join(columns)}) VALUES ({placeholders}){returning}"
 
     conn = get_db_connection(db_path)
     try:
@@ -329,7 +383,11 @@ def update_row(
     *,
     id_column: str = "id",
     protected_fields: set[str] | None = None,
+    schema: str = None,
 ) -> bool:
+    if schema is None:
+        schema = get_framework_schema()
+
     schema_map = _get_schema_map(db_path, table)
     if id_column not in schema_map:
         raise ValueError(f"Unknown identifier column '{id_column}' for table '{table}'")
@@ -341,7 +399,7 @@ def update_row(
     conn = get_db_connection(db_path)
     try:
         cursor = conn.cursor()
-        cursor.execute(f"UPDATE {table} SET {set_clause} WHERE {id_column} = %s", values)
+        cursor.execute(f"UPDATE {schema}.{table} SET {set_clause} WHERE {id_column} = %s", values)
         conn.commit()
         return cursor.rowcount > 0
     finally:
@@ -354,7 +412,11 @@ def query_rows(
     table: str,
     filters: Optional[Dict] = None,
     limit: int = 50,
+    schema: str = None,
 ) -> List[Dict]:
+    if schema is None:
+        schema = get_framework_schema()
+
     valid_tables = set(get_all_schemas(db_path))
     if table not in valid_tables:
         raise ValueError(f"Invalid table '{table}'. Must be one of: {', '.join(sorted(valid_tables))}")
@@ -370,7 +432,7 @@ def query_rows(
             where_clauses.append(f"{col} = %s")
             params.append(val)
 
-    sql = f"SELECT * FROM {table}"
+    sql = f"SELECT * FROM {schema}.{table}"
     if where_clauses:
         sql += " WHERE " + " AND ".join(where_clauses)
     sql += " LIMIT %s"

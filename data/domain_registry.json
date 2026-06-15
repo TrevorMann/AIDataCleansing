@@ -4,13 +4,30 @@
   "domains": {
     "real_estate": {
       "initialized_at": "2026-05-05",
-      "label": "Real estate listings — addresses, postal codes, neighbourhoods",
+      "label": "Real estate listings \u00e2\u20ac\u201d addresses, postal codes, neighbourhoods",
       "sub_category_dimension": "country",
-      "sub_categories": ["CA", "USA", "NL", "MX", "JP"],
+      "sub_categories": [
+        "CA",
+        "USA",
+        "NL",
+        "MX",
+        "JP"
+      ],
       "prompt_module": "prompts.domains.real_estate",
       "skills_path": "skills/real_estate/skills.yaml",
       "seeders_path": "seeders/real_estate/manifest.yaml",
-      "tables": ["raw_data", "cleaned_data"]
+      "tables": [
+        "raw_data",
+        "cleaned_data"
+      ]
+    },
+    "sports_ticketing": {
+      "schema": "staging",
+      "tables": [
+        "ticketing_customers",
+        "ticketing_events",
+        "ticketing_tickets"
+      ]
     }
   }
 }

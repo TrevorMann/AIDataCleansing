@@ -12,12 +12,12 @@ def _vector_literal(values: list[float]) -> str:
     return "[" + ",".join(f"{value:.12g}" for value in values) + "]"
 
 
-def init_vector_tables(conn: Any) -> None:
+def init_vector_tables(conn: Any, schema: str = "data_details") -> None:
     cursor = conn.cursor()
     cursor.execute("CREATE EXTENSION IF NOT EXISTS vector")
     cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS search_cache (
+        f"""
+        CREATE TABLE IF NOT EXISTS {schema}.search_cache (
             id              SERIAL PRIMARY KEY,
             query_text      TEXT NOT NULL,
             query_embedding vector(1536) NOT NULL,
@@ -28,15 +28,15 @@ def init_vector_tables(conn: Any) -> None:
         """
     )
     cursor.execute(
-        """
+        f"""
         CREATE INDEX IF NOT EXISTS idx_search_cache_embedding
-            ON search_cache USING ivfflat (query_embedding vector_cosine_ops)
+            ON {schema}.search_cache USING ivfflat (query_embedding vector_cosine_ops)
             WITH (lists = 100)
         """
     )
     cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS address_lookup (
+        f"""
+        CREATE TABLE IF NOT EXISTS {schema}.address_lookup (
             id                SERIAL PRIMARY KEY,
             address_text      TEXT NOT NULL,
             postal_code       TEXT,
@@ -51,9 +51,9 @@ def init_vector_tables(conn: Any) -> None:
         """
     )
     cursor.execute(
-        """
+        f"""
         CREATE INDEX IF NOT EXISTS idx_address_lookup_embedding
-            ON address_lookup USING ivfflat (address_embedding vector_cosine_ops)
+            ON {schema}.address_lookup USING ivfflat (address_embedding vector_cosine_ops)
             WITH (lists = 100)
         """
     )

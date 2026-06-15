@@ -10,15 +10,22 @@ def get_db_connection(_: str) -> Any:
     return get_connection(get_pg_dsn())
 
 
-def init_db(db_path: str) -> None:
-    """Initialize the PostgreSQL database with schema if it doesn't exist."""
+def init_db(db_path: str, schema: str = "data_details") -> None:
+    """Initialize the PostgreSQL database with framework schema.
+
+    Creates a schema (default: 'data_details') for all framework tables.
+    Domains point to their own data schemas elsewhere.
+    """
     conn = get_db_connection(db_path)
     try:
         cursor = conn.cursor()
 
+        # Create the schema if it doesn't exist
+        cursor.execute(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+
         cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS raw_data (
+            f"""
+            CREATE TABLE IF NOT EXISTS {schema}.raw_data (
                 id SERIAL PRIMARY KEY,
                 name TEXT,
                 age INTEGER,
@@ -35,10 +42,10 @@ def init_db(db_path: str) -> None:
             """
         )
         cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS cleaned_data (
+            f"""
+            CREATE TABLE IF NOT EXISTS {schema}.cleaned_data (
                 id SERIAL PRIMARY KEY,
-                raw_data_id INTEGER NOT NULL REFERENCES raw_data(id),
+                raw_data_id INTEGER NOT NULL REFERENCES {schema}.raw_data(id),
                 name TEXT,
                 age INTEGER,
                 city TEXT,
@@ -55,11 +62,11 @@ def init_db(db_path: str) -> None:
             """
         )
         cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS audit_log (
+            f"""
+            CREATE TABLE IF NOT EXISTS {schema}.audit_log (
                 id SERIAL PRIMARY KEY,
-                raw_data_id INTEGER NOT NULL REFERENCES raw_data(id),
-                cleaned_data_id INTEGER REFERENCES cleaned_data(id),
+                raw_data_id INTEGER NOT NULL REFERENCES {schema}.raw_data(id),
+                cleaned_data_id INTEGER REFERENCES {schema}.cleaned_data(id),
                 rule_applied TEXT,
                 description TEXT,
                 applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -68,11 +75,11 @@ def init_db(db_path: str) -> None:
             """
         )
         cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS flags (
+            f"""
+            CREATE TABLE IF NOT EXISTS {schema}.flags (
                 id              SERIAL PRIMARY KEY,
-                raw_data_id     INTEGER NOT NULL REFERENCES raw_data(id),
-                cleaned_data_id INTEGER REFERENCES cleaned_data(id),
+                raw_data_id     INTEGER NOT NULL REFERENCES {schema}.raw_data(id),
+                cleaned_data_id INTEGER REFERENCES {schema}.cleaned_data(id),
                 flag_type       TEXT NOT NULL,
                 severity        TEXT NOT NULL,
                 reason          TEXT NOT NULL,
@@ -85,14 +92,14 @@ def init_db(db_path: str) -> None:
             """
         )
         cursor.execute(
-            """
+            f"""
             CREATE INDEX IF NOT EXISTS idx_flags_unresolved
-            ON flags(resolved_at) WHERE resolved_at IS NULL
+            ON {schema}.flags(resolved_at) WHERE resolved_at IS NULL
             """
         )
         cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS column_metadata (
+            f"""
+            CREATE TABLE IF NOT EXISTS {schema}.column_metadata (
                 domain      TEXT NOT NULL DEFAULT 'base',
                 table_name  TEXT NOT NULL,
                 column_name TEXT NOT NULL,
@@ -102,26 +109,26 @@ def init_db(db_path: str) -> None:
             """
         )
         # Migration: add domain column if existing install lacks it
-        cursor.execute("""
+        cursor.execute(f"""
             DO $$
             BEGIN
                 IF NOT EXISTS (
                     SELECT 1 FROM information_schema.columns
-                    WHERE table_name='column_metadata' AND column_name='domain'
+                    WHERE table_schema = '{schema}' AND table_name='column_metadata' AND column_name='domain'
                 ) THEN
-                    ALTER TABLE column_metadata ADD COLUMN domain TEXT NOT NULL DEFAULT 'base';
+                    ALTER TABLE {schema}.column_metadata ADD COLUMN domain TEXT NOT NULL DEFAULT 'base';
                 END IF;
             END $$
         """)
         # Migration 006: annotation provenance fields
-        cursor.execute("""
+        cursor.execute(f"""
             DO $$
             BEGIN
                 IF NOT EXISTS (
                     SELECT 1 FROM information_schema.columns
-                    WHERE table_name='column_metadata' AND column_name='is_llm_generated'
+                    WHERE table_schema = '{schema}' AND table_name='column_metadata' AND column_name='is_llm_generated'
                 ) THEN
-                    ALTER TABLE column_metadata
+                    ALTER TABLE {schema}.column_metadata
                         ADD COLUMN is_llm_generated BOOLEAN   DEFAULT FALSE,
                         ADD COLUMN confidence        FLOAT     DEFAULT NULL,
                         ADD COLUMN generated_at      TIMESTAMP DEFAULT NULL;
@@ -129,8 +136,8 @@ def init_db(db_path: str) -> None:
             END $$
         """)
         cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS column_profiles (
+            f"""
+            CREATE TABLE IF NOT EXISTS {schema}.column_profiles (
                 table_name      TEXT NOT NULL,
                 column_name     TEXT NOT NULL,
                 inferred_role   TEXT,
@@ -145,22 +152,22 @@ def init_db(db_path: str) -> None:
             """
         )
 
-        _create_municipality_tables(cursor)
-        _add_municipality_columns_to_listings(cursor)
-        _seed_column_metadata(cursor)
-        _seed_column_profiles(cursor)
-        init_vector_tables(conn)
+        _create_municipality_tables(cursor, schema)
+        _add_municipality_columns_to_listings(cursor, schema)
+        _seed_column_metadata(cursor, schema)
+        _seed_column_profiles(cursor, schema)
+        init_vector_tables(conn, schema)
         conn.commit()
     finally:
         conn.close()
 
 
-def _create_municipality_tables(cursor) -> None:
+def _create_municipality_tables(cursor, schema: str) -> None:
     """Create municipality normalization tables for PostgreSQL."""
     # geo_boundary_reference
     cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS geo_boundary_reference (
+        f"""
+        CREATE TABLE IF NOT EXISTS {schema}.geo_boundary_reference (
             id SERIAL PRIMARY KEY,
             normalized_municipality TEXT NOT NULL,
             province TEXT NOT NULL,
@@ -173,16 +180,16 @@ def _create_municipality_tables(cursor) -> None:
         """
     )
     cursor.execute(
-        """
+        f"""
         CREATE INDEX IF NOT EXISTS idx_geo_boundary_municipality_province
-        ON geo_boundary_reference(normalized_municipality, province)
+        ON {schema}.geo_boundary_reference(normalized_municipality, province)
         """
     )
 
     # city_municipality_map
     cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS city_municipality_map (
+        f"""
+        CREATE TABLE IF NOT EXISTS {schema}.city_municipality_map (
             id SERIAL PRIMARY KEY,
             city_name TEXT NOT NULL,
             province TEXT NOT NULL,
@@ -196,16 +203,16 @@ def _create_municipality_tables(cursor) -> None:
         """
     )
     cursor.execute(
-        """
+        f"""
         CREATE INDEX IF NOT EXISTS idx_city_map_city_province
-        ON city_municipality_map(city_name, province, country)
+        ON {schema}.city_municipality_map(city_name, province, country)
         """
     )
 
     # fsa_municipality_mapping
     cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS fsa_municipality_mapping (
+        f"""
+        CREATE TABLE IF NOT EXISTS {schema}.fsa_municipality_mapping (
             id SERIAL PRIMARY KEY,
             fsa TEXT NOT NULL,
             province TEXT NOT NULL,
@@ -220,16 +227,16 @@ def _create_municipality_tables(cursor) -> None:
         """
     )
     cursor.execute(
-        """
+        f"""
         CREATE INDEX IF NOT EXISTS idx_fsa_mapping_fsa_province
-        ON fsa_municipality_mapping(fsa, province, country)
+        ON {schema}.fsa_municipality_mapping(fsa, province, country)
         """
     )
 
     # municipality_lookup_cache
     cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS municipality_lookup_cache (
+        f"""
+        CREATE TABLE IF NOT EXISTS {schema}.municipality_lookup_cache (
             id SERIAL PRIMARY KEY,
             lookup_key TEXT NOT NULL UNIQUE,
             lookup_value TEXT NOT NULL,
@@ -243,18 +250,18 @@ def _create_municipality_tables(cursor) -> None:
         """
     )
     cursor.execute(
-        """
+        f"""
         CREATE INDEX IF NOT EXISTS idx_cache_lookup_key
-        ON municipality_lookup_cache(lookup_key)
+        ON {schema}.municipality_lookup_cache(lookup_key)
         """
     )
 
     # property_migration_history
     cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS property_migration_history (
+        f"""
+        CREATE TABLE IF NOT EXISTS {schema}.property_migration_history (
             id SERIAL PRIMARY KEY,
-            raw_data_id INTEGER NOT NULL REFERENCES raw_data(id),
+            raw_data_id INTEGER NOT NULL REFERENCES {schema}.raw_data(id),
             old_municipality TEXT,
             new_municipality TEXT NOT NULL,
             normalization_method TEXT,
@@ -265,14 +272,14 @@ def _create_municipality_tables(cursor) -> None:
         """
     )
     cursor.execute(
-        """
+        f"""
         CREATE INDEX IF NOT EXISTS idx_property_migration_raw_data_id
-        ON property_migration_history(raw_data_id)
+        ON {schema}.property_migration_history(raw_data_id)
         """
     )
 
 
-def _add_municipality_columns_to_listings(cursor) -> None:
+def _add_municipality_columns_to_listings(cursor, schema: str) -> None:
     """Add municipality normalization columns to raw_data and cleaned_data tables."""
     # Add to raw_data
     for col_name, col_type in [
@@ -282,7 +289,7 @@ def _add_municipality_columns_to_listings(cursor) -> None:
         ("normalization_status", "TEXT DEFAULT 'pending'"),
     ]:
         cursor.execute(f"""
-            ALTER TABLE raw_data ADD COLUMN IF NOT EXISTS {col_name} {col_type}
+            ALTER TABLE {schema}.raw_data ADD COLUMN IF NOT EXISTS {col_name} {col_type}
         """)
 
     # Add to cleaned_data
@@ -293,26 +300,26 @@ def _add_municipality_columns_to_listings(cursor) -> None:
         ("normalization_status", "TEXT DEFAULT 'pending'"),
     ]:
         cursor.execute(f"""
-            ALTER TABLE cleaned_data ADD COLUMN IF NOT EXISTS {col_name} {col_type}
+            ALTER TABLE {schema}.cleaned_data ADD COLUMN IF NOT EXISTS {col_name} {col_type}
         """)
 
 
-def add_source_column_to_cache(conn: Any) -> None:
+def add_source_column_to_cache(conn: Any, schema: str = "data_details") -> None:
     """Add source column to municipality_lookup_cache for tracking data provenance.
 
     Migration: adds source TEXT column if not present.
     """
     try:
         cursor = conn.cursor()
-        cursor.execute("""
-            ALTER TABLE municipality_lookup_cache ADD COLUMN IF NOT EXISTS source TEXT
+        cursor.execute(f"""
+            ALTER TABLE {schema}.municipality_lookup_cache ADD COLUMN IF NOT EXISTS source TEXT
         """)
         conn.commit()
     except Exception:
         pass
 
 
-def _seed_column_metadata(cursor) -> None:
+def _seed_column_metadata(cursor, schema: str) -> None:
     base = [
         ("base", "raw_data", "name",           "Full name of contact — may have typos or wrong case. Clean to Proper Case."),
         ("base", "raw_data", "age",            "Age in years (integer 1-120). Non-numeric values are invalid."),
@@ -335,8 +342,8 @@ def _seed_column_metadata(cursor) -> None:
         ("base", "cleaned_data", "validation_notes", "Notes on every decision: what changed, what was uncertain, confidence level. Document each field."),
     ]
     cursor.executemany(
-        """
-        INSERT INTO column_metadata (domain, table_name, column_name, description)
+        f"""
+        INSERT INTO {schema}.column_metadata (domain, table_name, column_name, description)
         VALUES (%s, %s, %s, %s)
         ON CONFLICT (domain, table_name, column_name) DO NOTHING
         """,
@@ -344,7 +351,7 @@ def _seed_column_metadata(cursor) -> None:
     )
 
 
-def _seed_column_profiles(cursor) -> None:
+def _seed_column_profiles(cursor, schema: str) -> None:
     columns = {
         "raw_data": [
             "id", "name", "age", "city", "address", "postal_code", "municipality",
@@ -381,8 +388,8 @@ def _seed_column_profiles(cursor) -> None:
                 )
             )
     cursor.executemany(
-        """
-        INSERT INTO column_profiles (
+        f"""
+        INSERT INTO {schema}.column_profiles (
             table_name, column_name, inferred_role, role_confidence,
             normalizer, validator, is_sensitive, notes
         )
@@ -391,3 +398,8 @@ def _seed_column_profiles(cursor) -> None:
         """,
         rows,
     )
+
+
+if __name__ == "__main__":
+    init_db(None)
+    print("✓ Database initialized in 'data_details' schema")

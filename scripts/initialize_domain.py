@@ -56,26 +56,51 @@ def _pause(prompt: str, default_yes: bool = True) -> bool:
 
 # ── Phase 0: Table registration ───────────────────────────────────────────────
 
-def phase0_register_tables(initializer: DomainInitializer, conn) -> list[str]:
+def phase0_register_tables(initializer: DomainInitializer, conn) -> tuple[list[str], str]:
     _phase_header(0, "Table Registration")
 
     existing = initializer.get_registered_tables()
     if existing:
+        schema = initializer.get_schema()
         print(f"Using registered tables: {', '.join(existing)}")
-        return existing
+        print(f"Schema: {schema}")
+        return existing, schema
 
-    all_tables = initializer.get_all_db_tables(conn)
+    # Step 1: Choose schema
+    available_schemas = initializer.get_available_schemas(conn)
+    if len(available_schemas) == 1:
+        selected_schema = available_schemas[0]
+        print(f"Database schema: {selected_schema}\n")
+    else:
+        print(f"Available schemas:\n")
+        for i, schema in enumerate(available_schemas, 1):
+            print(f"  [{i}] {schema}")
+        raw = input("\nSelect schema (number): ").strip()
+        try:
+            idx = int(raw) - 1
+            if not (0 <= idx < len(available_schemas)):
+                print("Invalid selection. Using 'public'.")
+                selected_schema = "public"
+            else:
+                selected_schema = available_schemas[idx]
+        except ValueError:
+            print("Invalid input. Using 'public'.")
+            selected_schema = "public"
+        print()
+
+    # Step 2: Choose tables from that schema
+    all_tables = initializer.get_all_db_tables(conn, selected_schema)
     non_system = [t for t in all_tables if t not in SYSTEM_TABLES]
 
     # For large DBs: score and present top candidates
     if len(non_system) > 15:
-        print(f"Found {len(all_tables)} tables. Showing top candidates for '{initializer.domain}'...\n")
+        print(f"Found {len(all_tables)} tables in schema '{selected_schema}'. Showing top candidates for '{initializer.domain}'...\n")
         scored = initializer.score_tables(non_system)
         candidates = [t for t, _ in scored[:10]]
     else:
         candidates = non_system
 
-    print(f"Found {len(all_tables)} tables in database.\n")
+    print(f"Found {len(all_tables)} tables in '{selected_schema}' schema.\n")
     print(f"Select tables that belong to '{initializer.domain}':")
 
     for i, table in enumerate(candidates, 1):
@@ -102,14 +127,15 @@ def phase0_register_tables(initializer: DomainInitializer, conn) -> list[str]:
         print("No valid tables selected. Exiting.")
         sys.exit(0)
 
-    initializer.register_tables(selected)
+    initializer.register_tables(selected, selected_schema)
     print(f"\nRegistered: {', '.join(selected)} → domain_registry.json")
-    return selected
+    print(f"Schema: {selected_schema}")
+    return selected, selected_schema
 
 
 # ── Phase 1: Schema discovery ─────────────────────────────────────────────────
 
-def _get_table_schema(table: str, conn) -> list[dict]:
+def _get_table_schema(table: str, conn, schema: str = "public") -> list[dict]:
     """Query column metadata for a single table. Tries Postgres, falls back to SQLite."""
     try:
         with conn.cursor() as cur:
@@ -131,10 +157,10 @@ def _get_table_schema(table: str, conn) -> list[dict]:
                           AND kcu.column_name    = c.column_name
                     ) AS pk
                 FROM information_schema.columns c
-                WHERE c.table_schema = 'public' AND c.table_name = %s
+                WHERE c.table_schema = %s AND c.table_name = %s
                 ORDER BY c.ordinal_position
                 """,
-                (table,),
+                (schema, table),
             )
             return [dict(row) for row in cur.fetchall()]
     except Exception:
@@ -147,21 +173,21 @@ def _get_table_schema(table: str, conn) -> list[dict]:
             ]
 
 
-def phase1_schema_discovery(tables: list[str], conn) -> dict[str, list[dict]]:
+def phase1_schema_discovery(tables: list[str], conn, schema: str = "public") -> dict[str, list[dict]]:
     _phase_header(1, "Schema Discovery")
-    print(f"Scanning {len(tables)} tables...\n")
+    print(f"Scanning {len(tables)} tables in schema '{schema}'...\n")
 
-    schema: dict[str, list[dict]] = {}
+    db_schema: dict[str, list[dict]] = {}
     for table in tables:
-        columns = _get_table_schema(table, conn)
-        schema[table] = columns
+        columns = _get_table_schema(table, conn, schema)
+        db_schema[table] = columns
         print(f"  {table} ({len(columns)} columns)")
         for col in columns:
             pk_flag = "  PK" if col.get("pk") else ""
             nn_flag = "  NOT NULL" if col.get("notnull") else ""
             print(f"    {col['name']:<28} {col['type']:<20}{nn_flag}{pk_flag}")
 
-    return schema
+    return db_schema
 
 
 # ── Phase 3 helpers ───────────────────────────────────────────────────────────
@@ -201,12 +227,12 @@ def _sample_text_columns(
 
 
 def _load_annotations(domain: str, conn) -> dict[str, str]:
-    """Load column annotations from column_metadata. Returns {table.col: description}."""
+    """Load column annotations from data_details.column_metadata. Returns {table.col: description}."""
     try:
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT table_name, column_name, description "
-                "FROM column_metadata WHERE domain = %s AND description IS NOT NULL",
+                "FROM data_details.column_metadata WHERE domain = %s AND description IS NOT NULL",
                 (domain,),
             )
             return {
@@ -219,9 +245,9 @@ def _load_annotations(domain: str, conn) -> dict[str, str]:
 
 # ── Stubs for future tasks ────────────────────────────────────────────────────
 
-def phase2_annotation(domain: str, tables: list[str], conn, force: bool = False) -> None:
+def phase2_annotation(domain: str, tables: list[str], conn, schema: str = "public", force: bool = False) -> None:
     _phase_header(2, "Annotation")
-    print(f"Annotating columns across {len(tables)} table(s)...\n")
+    print(f"Annotating columns across {len(tables)} table(s) in schema '{schema}'...\n")
 
     llm = _build_llm_client()
     svc = MetadataAnnotationService(llm_client=llm)
@@ -229,9 +255,9 @@ def phase2_annotation(domain: str, tables: list[str], conn, force: bool = False)
     # Wrap _annotate_column to print per-column progress
     original_annotate = svc._annotate_column
 
-    def _annotating_with_progress(d, dd, table, column, conn_inner):
+    def _annotating_with_progress(d, dd, table, column, conn_inner, db_schema="public"):
         print(f"  {table}.{column:<30} ... ", end="", flush=True)
-        result = original_annotate(d, dd, table, column, conn_inner)
+        result = original_annotate(d, dd, table, column, conn_inner, db_schema)
         conf = result.get("confidence", 0)
         marker = "⚠ low confidence" if conf < 0.70 else "done"
         print(f"{marker} (confidence={conf:.2f})")
@@ -239,7 +265,7 @@ def phase2_annotation(domain: str, tables: list[str], conn, force: bool = False)
 
     svc._annotate_column = _annotating_with_progress
 
-    report = svc.run(domain, conn, tables=tables, force=force)
+    report = svc.run(domain, conn, tables=tables, schema=schema, force=force)
 
     print(f"\nDone: {report.annotated} annotated, {report.skipped} skipped", end="")
     if report.low_confidence:
@@ -373,19 +399,20 @@ def cmd_add_table(domain: str, initializer: DomainInitializer, conn) -> None:
         return
 
     updated = registered + selected
-    initializer.register_tables(updated)
+    db_schema = initializer.get_schema()
+    initializer.register_tables(updated, db_schema)
     print(f"\nAdded: {', '.join(selected)} → domain_registry.json")
 
     # Annotate new tables
     print()
-    phase2_annotation(domain, selected, conn)
+    phase2_annotation(domain, selected, conn, db_schema)
 
     # Prompt for seed refresh
     if _pause("Seeds were generated from previous schema. Refresh seeds with new table context?",
               default_yes=False):
         all_tables = initializer.get_registered_tables() or []
-        schema = phase1_schema_discovery(all_tables, conn)
-        phase3_seed_research(domain, schema, conn)
+        schema_dict = phase1_schema_discovery(all_tables, conn, db_schema)
+        phase3_seed_research(domain, schema_dict, conn)
 
 
 def cmd_teardown(domain: str, initializer: DomainInitializer, conn) -> None:
@@ -455,11 +482,13 @@ def cmd_refresh_seeds(domain: str, initializer: DomainInitializer, conn) -> None
         )
         sys.exit(1)
 
+    db_schema = initializer.get_schema()
     print(f"Using registered tables: {', '.join(tables)}")
+    print(f"Schema: {db_schema}")
     print("Skipping phases 0-2 (annotation unchanged). Running Phase 3 only.\n")
 
-    schema = phase1_schema_discovery(tables, conn)
-    phase3_seed_research(domain, schema, conn)
+    schema_dict = phase1_schema_discovery(tables, conn, db_schema)
+    phase3_seed_research(domain, schema_dict, conn)
 
 
 # ── main ──────────────────────────────────────────────────────────────────────
@@ -500,19 +529,19 @@ def main() -> None:
         return
 
     # Full initialization flow
-    tables = phase0_register_tables(initializer, conn)
+    tables, db_schema = phase0_register_tables(initializer, conn)
 
     if not _pause("Tables registered. Continue to schema discovery?"):
         print("Stopped after Phase 0.")
         return
 
-    schema = phase1_schema_discovery(tables, conn)
+    schema = phase1_schema_discovery(tables, conn, db_schema)
 
     if not _pause("Schema discovered. Continue to annotation?"):
         print("Stopped after Phase 1.")
         return
 
-    phase2_annotation(args.domain, tables, conn, force=args.force)
+    phase2_annotation(args.domain, tables, conn, db_schema, force=args.force)
 
     if not _pause("Annotation complete. Continue to seed research?"):
         print("Stopped after Phase 2.")

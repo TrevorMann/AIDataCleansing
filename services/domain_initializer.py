@@ -62,11 +62,20 @@ class DomainInitializer:
             return None
         return domain_entry.get("tables")
 
-    def register_tables(self, tables: list[str]) -> None:
-        """Write (or overwrite) the tables list for this domain in the registry."""
+    def register_tables(self, tables: list[str], schema: str = "public") -> None:
+        """Write (or overwrite) the tables and schema for this domain in the registry."""
         data = self._load()
         data.setdefault("domains", {}).setdefault(self.domain, {})["tables"] = tables
+        data["domains"][self.domain]["schema"] = schema
         self._save(data)
+
+    def get_schema(self) -> str:
+        """Return the registered schema for this domain, or 'public' if not set."""
+        data = self._load()
+        domain_entry = data.get("domains", {}).get(self.domain)
+        if domain_entry is None:
+            return "public"
+        return domain_entry.get("schema", "public")
 
     def unregister_tables(self) -> bool:
         """Remove this domain's `tables` entry from the registry.
@@ -86,8 +95,24 @@ class DomainInitializer:
         self._save(data)
         return removed
 
-    def get_all_db_tables(self, conn) -> list[str]:
-        """Return all user tables currently in the DB (Postgres first, SQLite fallback)."""
+    def get_available_schemas(self, conn) -> list[str]:
+        """List available schemas in the database (Postgres only; SQLite returns ['main'])."""
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT schema_name
+                    FROM information_schema.schemata
+                    WHERE schema_name NOT IN ('pg_catalog', 'information_schema', 'pg_toast', 'pg_temp_1')
+                    ORDER BY schema_name
+                    """
+                )
+                return [row["schema_name"] for row in cur.fetchall()]
+        except Exception:  # noqa: BLE001 — expected on SQLite connections
+            return ["main"]  # SQLite only has 'main' schema
+
+    def get_all_db_tables(self, conn, schema: str = "public") -> list[str]:
+        """Return all user tables in the specified schema (Postgres first, SQLite fallback)."""
         postgres_failed = False
         try:
             with conn.cursor() as cur:
@@ -95,9 +120,10 @@ class DomainInitializer:
                     """
                     SELECT table_name
                     FROM information_schema.tables
-                    WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+                    WHERE table_schema = %s AND table_type = 'BASE TABLE'
                     ORDER BY table_name
-                    """
+                    """,
+                    (schema,),
                 )
                 return [row["table_name"] for row in cur.fetchall()]
         except Exception:  # noqa: BLE001 — expected on SQLite connections

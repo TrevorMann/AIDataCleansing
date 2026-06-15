@@ -22,11 +22,15 @@ record_linker:
         fields: [email]
         match_type: exact
         weight: 1.0
-      - name: name_company
-        fields: [first_name, last_name, company]
+      - name: phone_exact
+        fields: [phone_number]
+        match_type: exact
+        weight: 1.0
+      - name: address_fuzzy
+        fields: [street_address, city, state]
         match_type: fuzzy
-        threshold: 0.85
-        weight: 0.90
+        threshold: 0.80
+        weight: 0.60
 ```
 
 ## Output

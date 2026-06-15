@@ -3,7 +3,8 @@ from typing import Dict, List
 from db.sqlite_init import get_db_connection
 
 
-def get_table_schema(db_path: str, table_name: str) -> List[Dict]:
+def get_table_schema(db_path: str, table_name: str, schema: str = "main") -> List[Dict]:
+    """Get table schema. Schema parameter ignored for SQLite (only has 'main')."""
     conn = get_db_connection(db_path)
     try:
         cursor = conn.cursor()
@@ -23,7 +24,8 @@ def get_table_schema(db_path: str, table_name: str) -> List[Dict]:
         conn.close()
 
 
-def get_all_schemas(db_path: str) -> Dict[str, List[Dict]]:
+def get_all_schemas(db_path: str, schema: str = "main") -> Dict[str, List[Dict]]:
+    """Get all tables. Schema parameter ignored for SQLite (only has 'main')."""
     conn = get_db_connection(db_path)
     try:
         cursor = conn.cursor()
@@ -31,11 +33,17 @@ def get_all_schemas(db_path: str) -> Dict[str, List[Dict]]:
         tables = [row[0] for row in cursor.fetchall()]
     finally:
         conn.close()
-    return {table: get_table_schema(db_path, table) for table in tables}
+    return {table: get_table_schema(db_path, table, schema) for table in tables}
 
 
-def format_schema_for_prompt(db_path: str) -> str:
-    schemas = get_all_schemas(db_path)
+def get_available_schemas(db_path: str) -> List[str]:
+    """SQLite only has 'main' schema."""
+    return ["main"]
+
+
+def format_schema_for_prompt(db_path: str, schema: str = "main") -> str:
+    """Format schema for prompt. Schema parameter ignored for SQLite."""
+    schemas = get_all_schemas(db_path, schema)
     profiles = get_all_column_profiles(db_path)
     formatted = "<DATABASE_SCHEMA>\n"
     for table_name, columns in schemas.items():
@@ -54,8 +62,9 @@ def format_schema_for_prompt(db_path: str) -> str:
     return formatted
 
 
-def get_table_columns(db_path: str, table_name: str) -> List[str]:
-    return [col["name"] for col in get_table_schema(db_path, table_name)]
+def get_table_columns(db_path: str, table_name: str, schema: str = "main") -> List[str]:
+    """Get table columns. Schema parameter ignored for SQLite."""
+    return [col["name"] for col in get_table_schema(db_path, table_name, schema)]
 
 
 def get_column_metadata(db_path: str, table_name: str) -> Dict[str, str]:
@@ -111,6 +120,7 @@ def get_column_profiles(db_path: str, table_name: str) -> Dict[str, Dict]:
         conn.close()
 
 
-def get_all_column_profiles(db_path: str) -> Dict[str, Dict[str, Dict]]:
-    schemas = get_all_schemas(db_path)
+def get_all_column_profiles(db_path: str, schema: str = "main") -> Dict[str, Dict[str, Dict]]:
+    """Get all column profiles. Schema parameter ignored for SQLite."""
+    schemas = get_all_schemas(db_path, schema)
     return {table_name: get_column_profiles(db_path, table_name) for table_name in schemas}

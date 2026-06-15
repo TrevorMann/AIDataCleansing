@@ -5,18 +5,23 @@ from datetime import datetime
 from typing import List, Optional
 from urllib.parse import urlparse
 
+from db.schema_config import get_framework_schema
 
-def top_queries_for(conn, domain: str, gap_type: str, k: int = 3) -> List[str]:
+
+def top_queries_for(conn, domain: str, gap_type: str, k: int = 3, schema: str = None) -> List[str]:
     """Return top-k query templates for gap, ordered by success rate.
 
     Falls back to seed queries (success_count=0, failure_count=0) when no
     learned signal exists yet.
     """
+    if schema is None:
+        schema = get_framework_schema()
+
     with conn.cursor() as cur:
         cur.execute(
-            """
+            f"""
             SELECT query_template
-            FROM query_pattern_memory
+            FROM {schema}.query_pattern_memory
             WHERE domain = %s AND gap_type = %s
             ORDER BY
                 (success_count::float / NULLIF(success_count + failure_count, 0)) DESC NULLS LAST,
@@ -28,16 +33,19 @@ def top_queries_for(conn, domain: str, gap_type: str, k: int = 3) -> List[str]:
         return [row[0] for row in cur.fetchall()]
 
 
-def record_query_outcome(conn, domain: str, gap_type: str, query_template: str, success: bool):
+def record_query_outcome(conn, domain: str, gap_type: str, query_template: str, success: bool, schema: str = None):
     """Increment success or failure counter for a query template."""
+    if schema is None:
+        schema = get_framework_schema()
+
     col = "success_count" if success else "failure_count"
     with conn.cursor() as cur:
         cur.execute(
             f"""
-            INSERT INTO query_pattern_memory (domain, gap_type, query_template, {col}, last_used_at)
+            INSERT INTO {schema}.query_pattern_memory (domain, gap_type, query_template, {col}, last_used_at)
             VALUES (%s, %s, %s, 1, NOW())
             ON CONFLICT (domain, gap_type, query_template) DO UPDATE
-                SET {col} = query_pattern_memory.{col} + 1,
+                SET {col} = {schema}.query_pattern_memory.{col} + 1,
                     last_used_at = NOW()
             """,
             (domain, gap_type, query_template),
@@ -45,26 +53,32 @@ def record_query_outcome(conn, domain: str, gap_type: str, query_template: str, 
     conn.commit()
 
 
-def update_source_score(conn, domain_key: str, url_host: str, success: bool):
+def update_source_score(conn, domain_key: str, url_host: str, success: bool, schema: str = None):
     """Adjust trust score for a source host based on parse success."""
+    if schema is None:
+        schema = get_framework_schema()
+
     col = "success_count" if success else "failure_count"
     delta = 0.02 if success else -0.01
     with conn.cursor() as cur:
         cur.execute(
             f"""
-            INSERT INTO source_registry (domain_key, url_host, {col}, trust_score)
+            INSERT INTO {schema}.source_registry (domain_key, url_host, {col}, trust_score)
             VALUES (%s, %s, 1, 0.5 + %s)
             ON CONFLICT (domain_key, url_host) DO UPDATE
-                SET {col} = source_registry.{col} + 1,
-                    trust_score = GREATEST(0.0, LEAST(1.0, source_registry.trust_score + %s))
+                SET {col} = {schema}.source_registry.{col} + 1,
+                    trust_score = GREATEST(0.0, LEAST(1.0, {schema}.source_registry.trust_score + %s))
             """,
             (domain_key, url_host, delta, delta),
         )
     conn.commit()
 
 
-def load_query_packs(conn, domain: str, packs_yaml_path: str):
+def load_query_packs(conn, domain: str, packs_yaml_path: str, schema: str = None):
     """Seed query_pattern_memory from a query packs YAML file. Idempotent."""
+    if schema is None:
+        schema = get_framework_schema()
+
     import yaml
     from pathlib import Path
 
@@ -80,8 +94,8 @@ def load_query_packs(conn, domain: str, packs_yaml_path: str):
         for query_template in spec.get("seed_queries", []):
             with conn.cursor() as cur:
                 cur.execute(
-                    """
-                    INSERT INTO query_pattern_memory (domain, gap_type, query_template)
+                    f"""
+                    INSERT INTO {schema}.query_pattern_memory (domain, gap_type, query_template)
                     VALUES (%s, %s, %s)
                     ON CONFLICT (domain, gap_type, query_template) DO NOTHING
                     """,
@@ -93,8 +107,8 @@ def load_query_packs(conn, domain: str, packs_yaml_path: str):
     for host in packs.get("trusted_sources", []):
         with conn.cursor() as cur:
             cur.execute(
-                """
-                INSERT INTO source_registry (domain_key, url_host, trust_score)
+                f"""
+                INSERT INTO {schema}.source_registry (domain_key, url_host, trust_score)
                 VALUES (%s, %s, 0.8)
                 ON CONFLICT (domain_key, url_host) DO NOTHING
                 """,

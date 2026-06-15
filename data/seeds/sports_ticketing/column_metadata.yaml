@@ -1,0 +1,174 @@
+- column_name: customer_id
+  data_type: text
+  description: Unique identifier for a sports ticketing customer
+  example_values:
+  - C123
+  - ABC456
+- column_name: first_name
+  data_type: text
+  description: Customer's given name (first name)
+  example_values:
+  - John
+  - Emily
+- column_name: last_name
+  data_type: text
+  description: Customer's family name in alphanumeric text, up to 50 characters
+  example_values:
+  - Doe
+  - Smith
+- column_name: address
+  data_type: text
+  description: Customer mailing address (street, city, state, zip)
+  example_values:
+  - 123 Main St, New York, NY 10001
+  - 456 Maple Ave, Toronto, ON M5K 2B7
+- column_name: city
+  data_type: text
+  description: Customer city name in the ticketing system
+  example_values:
+  - New York
+  - Toronto
+- column_name: state_province
+  data_type: text
+  description: State or province of the customer’s address
+  example_values:
+  - NY
+  - 'ON'
+- column_name: zip_postalcode
+  data_type: text
+  description: US ZIP code of a customer (or Canadian postal code)
+  example_values:
+  - '10001'
+  - M5K2B7
+- column_name: company
+  data_type: text
+  description: Company the customer is associated with
+  example_values:
+  - Acme Corp
+  - Beta Inc
+- column_name: _loaded_at
+  data_type: date
+  description: Timestamp when the row was loaded into the system
+  example_values:
+  - '2024-06-01 12:34:56'
+  - '2024-06-02 09:15:00'
+- column_name: event_id
+  data_type: text
+  description: Unique identifier for a sporting event
+  example_values:
+  - E1001
+  - EVT2024
+- column_name: home_team
+  data_type: text
+  description: Home team's name for the event
+  example_values:
+  - Maple Leafs
+  - Yankees
+- column_name: home_team_id
+  data_type: text
+  description: ID of the home team for the event
+  example_values:
+  - HT001
+  - HT045
+- column_name: away_team
+  data_type: text
+  description: Name of the away team for the event
+  example_values:
+  - Canadiens
+  - Red Sox
+- column_name: away_team_id
+  data_type: text
+  description: ID of the visiting team in a sports event
+  example_values:
+  - AT010
+  - AT078
+- column_name: date
+  data_type: date
+  description: Date of the sporting event (YYYY-MM-DD)
+  example_values:
+  - '2024-07-15'
+  - '2024-10-01'
+- column_name: start_time
+  data_type: date
+  description: Event start date and time (ISO 8601 format, Eastern Time)
+  example_values:
+  - '2024-07-15T19:30:00-04:00'
+  - '2024-10-01T18:00:00-04:00'
+- column_name: game_number
+  data_type: numeric
+  description: Numeric ID identifying a specific game event
+  example_values:
+  - '1'
+  - '42'
+- column_name: round_number
+  data_type: text
+  description: The event round in a multi‑round sports competition
+  example_values:
+  - '1'
+  - '2'
+- column_name: season
+  data_type: text
+  description: Season of the event, formatted as a year range (e.g., 2023-2024)
+  example_values:
+  - 2023-2024
+  - 2024-2025
+- column_name: venue
+  data_type: text
+  description: Name of the stadium or arena where the sporting event takes place
+  example_values:
+  - Madison Square Garden
+  - Saitama Stadium
+- column_name: broadcaster
+  data_type: text
+  description: Name of the TV or streaming channel airing the event
+  example_values:
+  - ESPN
+  - NBC Sports
+- column_name: transaction_id
+  data_type: text
+  description: Unique ID for the ticket purchase transaction
+  example_values:
+  - TXN12345
+  - T1234-5678
+- column_name: purchase_price
+  data_type: numeric
+  description: Monetary amount paid for the ticket (in local currency)
+  example_values:
+  - '120'
+  - '45'
+- column_name: price_code
+  data_type: code
+  description: Ticket price tier code, e.g., 'VIP', 'GA', 'STU'
+  example_values:
+  - VIP
+  - GA
+- column_name: section
+  data_type: text
+  description: Seat section identifier in the venue
+  example_values:
+  - A
+  - '101'
+- column_name: row
+  data_type: text
+  description: Seat row identifier
+  example_values:
+  - B
+  - '12'
+- column_name: seat
+  data_type: text
+  description: Seat location identifier
+  example_values:
+  - B12
+  - 101-05
+- column_name: purchase_date
+  data_type: date
+  description: Date the ticket was purchased, in YYYY-MM-DD format
+  example_values:
+  - '2024-05-20'
+  - '2024-06-01'
+- column_name: ticket_status
+  data_type: text
+  description: Status of a ticket (e.g., pending, confirmed, cancelled)
+  example_values:
+  - confirmed
+  - cancelled

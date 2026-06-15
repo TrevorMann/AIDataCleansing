@@ -33,7 +33,7 @@ class MetadataAnnotationService:
 
     # ── Public API ──────────────────────────────────────────────────────────
 
-    def list_gaps(self, domain: str, conn, tables: list[str]) -> list[dict]:
+    def list_gaps(self, domain: str, conn, tables: list[str], schema: str = "public") -> list[dict]:
         """Return [{table_name, column_name}] lacking annotation for domain.
 
         tables must be provided explicitly — use DomainInitializer(domain).get_registered_tables().
@@ -41,7 +41,7 @@ class MetadataAnnotationService:
         existing = self._get_existing_annotations(domain, conn)
         gaps = []
         for table in tables:
-            for col in self._get_table_columns(table, conn):
+            for col in self._get_table_columns(table, conn, schema):
                 if (table, col) not in existing:
                     gaps.append({"table_name": table, "column_name": col})
         return gaps
@@ -51,6 +51,7 @@ class MetadataAnnotationService:
         domain: str,
         conn,
         tables: list[str],
+        schema: str = "public",
         force: bool = False,
     ) -> AnnotationReport:
         """Annotate unannotated columns for domain. Skips existing unless force=True.
@@ -61,6 +62,21 @@ class MetadataAnnotationService:
             raise ValueError(
                 "llm_client is required to annotate; use list_gaps() for dry-run discovery."
             )
+
+        # Verify the metadata table exists
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT 1 FROM information_schema.tables WHERE table_schema='data_details' AND table_name='column_metadata'"
+                )
+                if not cur.fetchone():
+                    raise ValueError("Table data_details.column_metadata does not exist. Run db/pg_init.py first.")
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Failed to verify metadata table: {e}")
+            raise
+
         try:
             sr = SeederRegistry(domain)
             domain_description = sr.manifest.get("description", domain)
@@ -68,16 +84,18 @@ class MetadataAnnotationService:
             domain_description = domain
 
         existing = self._get_existing_annotations(domain, conn)
+        conn.commit()  # Commit the SELECT so next transaction is clean
+
         report = AnnotationReport(domain=domain)
 
         for table in tables:
-            for column in self._get_table_columns(table, conn):
+            for column in self._get_table_columns(table, conn, schema):
                 if (table, column) in existing and not force:
                     report.skipped += 1
                     continue
 
                 result = self._annotate_column(
-                    domain, domain_description, table, column, conn
+                    domain, domain_description, table, column, conn, schema
                 )
                 self._upsert_annotation(
                     domain, table, column,
@@ -96,34 +114,51 @@ class MetadataAnnotationService:
     # ── Private helpers ─────────────────────────────────────────────────────
 
     def _get_existing_annotations(self, domain: str, conn) -> set:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT table_name, column_name FROM column_metadata WHERE domain = %s",
-                (domain,),
-            )
-            return {(row[0], row[1]) for row in cur.fetchall()}
-
-    def _get_table_columns(self, table: str, conn) -> list[str]:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT column_name FROM information_schema.columns "
-                "WHERE table_name = %s ORDER BY ordinal_position",
-                (table,),
-            )
-            return [row[0] for row in cur.fetchall()]
-
-    def _get_sample_values(self, table: str, column: str, conn, n: int = 5) -> list:
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    sql.SQL("SELECT {} FROM {} WHERE {} IS NOT NULL LIMIT %s").format(
-                        sql.Identifier(column), sql.Identifier(table), sql.Identifier(column)
+                    "SELECT table_name, column_name FROM data_details.column_metadata WHERE domain = %s",
+                    (domain,),
+                )
+                return {(row["table_name"], row["column_name"]) for row in cur.fetchall()}
+        except Exception as e:
+            logger.warning(f"Could not fetch existing annotations: {e}. Starting fresh.")
+            conn.rollback()
+            return set()
+
+    def _get_table_columns(self, table: str, conn, schema: str = "public") -> list[str]:
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema = %s AND table_name = %s ORDER BY ordinal_position",
+                    (schema, table),
+                )
+                return [row["column_name"] for row in cur.fetchall()]
+        except Exception as e:
+            logger.warning(f"Could not fetch columns for {table}.{schema}: {e}")
+            conn.rollback()
+            return []
+        finally:
+            conn.commit()
+
+    def _get_sample_values(self, table: str, column: str, conn, schema: str = "public", n: int = 5) -> list:
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL("SELECT {col} FROM {schema}.{t} WHERE {col} IS NOT NULL LIMIT %s").format(
+                        schema=sql.Identifier(schema), t=sql.Identifier(table), col=sql.Identifier(column)
                     ),
                     (n,),
                 )
-                return [row[0] for row in cur.fetchall()]
-        except Exception:
+                # Cursor returns dicts, so access the column value by name
+                return [row[column] for row in cur.fetchall()]
+        except Exception as e:
+            logger.warning(f"Could not sample values for {schema}.{table}.{column}: {e}")
+            conn.rollback()
             return []
+        finally:
+            conn.commit()
 
     def _annotate_column(
         self,
@@ -132,8 +167,9 @@ class MetadataAnnotationService:
         table: str,
         column: str,
         conn,
+        schema: str = "public",
     ) -> dict:
-        samples = self._get_sample_values(table, column, conn)
+        samples = self._get_sample_values(table, column, conn, schema=schema)
         prompt = build_annotation_prompt(domain, domain_description, table, column, samples)
 
         try:
@@ -163,31 +199,36 @@ class MetadataAnnotationService:
         force: bool,
     ) -> None:
         now = datetime.now(timezone.utc)
-        with conn.cursor() as cur:
-            if force:
-                cur.execute(
-                    """
-                    INSERT INTO column_metadata
-                        (domain, table_name, column_name, description,
-                         is_llm_generated, confidence, generated_at)
-                    VALUES (%s, %s, %s, %s, TRUE, %s, %s)
-                    ON CONFLICT (domain, table_name, column_name) DO UPDATE
-                      SET description      = EXCLUDED.description,
-                          is_llm_generated = TRUE,
-                          confidence       = EXCLUDED.confidence,
-                          generated_at     = EXCLUDED.generated_at
-                    """,
-                    (domain, table, column, description, confidence, now),
-                )
-            else:
-                cur.execute(
-                    """
-                    INSERT INTO column_metadata
-                        (domain, table_name, column_name, description,
-                         is_llm_generated, confidence, generated_at)
-                    VALUES (%s, %s, %s, %s, TRUE, %s, %s)
-                    ON CONFLICT (domain, table_name, column_name) DO NOTHING
-                    """,
-                    (domain, table, column, description, confidence, now),
-                )
-        conn.commit()
+        try:
+            with conn.cursor() as cur:
+                if force:
+                    cur.execute(
+                        """
+                        INSERT INTO data_details.column_metadata
+                            (domain, table_name, column_name, description,
+                             is_llm_generated, confidence, generated_at)
+                        VALUES (%s, %s, %s, %s, TRUE, %s, %s)
+                        ON CONFLICT (domain, table_name, column_name) DO UPDATE
+                          SET description      = EXCLUDED.description,
+                              is_llm_generated = TRUE,
+                              confidence       = EXCLUDED.confidence,
+                              generated_at     = EXCLUDED.generated_at
+                        """,
+                        (domain, table, column, description, confidence, now),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        INSERT INTO data_details.column_metadata
+                            (domain, table_name, column_name, description,
+                             is_llm_generated, confidence, generated_at)
+                        VALUES (%s, %s, %s, %s, TRUE, %s, %s)
+                        ON CONFLICT (domain, table_name, column_name) DO NOTHING
+                        """,
+                        (domain, table, column, description, confidence, now),
+                    )
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Failed to upsert annotation for {domain}.{table}.{column}: {e}")
+            raise

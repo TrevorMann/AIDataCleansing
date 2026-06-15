@@ -5,6 +5,7 @@ import json
 import re
 from typing import Any, Dict, List, Optional
 
+from db.schema_config import get_framework_schema
 from skills.base import BaseSkill
 
 
@@ -28,6 +29,7 @@ class SkillPlanner(BaseSkill):
         self.conn = self.config.get("pg_conn")
         self.cache_ttl_hours = self.config.get("plan_cache_ttl_hours", 24)
         self._llm = self.config.get("llm_client")  # injected or built lazily
+        self.framework_schema = self.config.get("framework_schema", get_framework_schema())
 
     def _get_llm(self):
         if self._llm is None:
@@ -105,9 +107,9 @@ class SkillPlanner(BaseSkill):
         try:
             with self.conn.cursor() as cur:
                 cur.execute(
-                    "SELECT table_name, column_name, description "
-                    "FROM column_metadata WHERE domain = %s "
-                    "ORDER BY table_name, column_name",
+                    f"SELECT table_name, column_name, description "
+                    f"FROM {self.framework_schema}.column_metadata WHERE domain = %s "
+                    f"ORDER BY table_name, column_name",
                     (self.domain,),
                 )
                 rows = cur.fetchall()
@@ -158,7 +160,7 @@ class SkillPlanner(BaseSkill):
         try:
             with self.conn.cursor() as cur:
                 cur.execute(
-                    "SELECT plan, reasoning FROM plan_cache WHERE signature = %s AND expires_at > NOW()",
+                    f"SELECT plan, reasoning FROM {self.framework_schema}.plan_cache WHERE signature = %s AND expires_at > NOW()",
                     (sig,),
                 )
                 row = cur.fetchone()
@@ -174,8 +176,8 @@ class SkillPlanner(BaseSkill):
         try:
             with self.conn.cursor() as cur:
                 cur.execute(
-                    """
-                    INSERT INTO plan_cache (signature, domain, plan, reasoning, expires_at)
+                    f"""
+                    INSERT INTO {self.framework_schema}.plan_cache (signature, domain, plan, reasoning, expires_at)
                     VALUES (%s, %s, %s, %s, NOW() + INTERVAL '%s hours')
                     ON CONFLICT (signature) DO UPDATE
                         SET plan = EXCLUDED.plan, reasoning = EXCLUDED.reasoning,

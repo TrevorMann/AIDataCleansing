@@ -1,17 +1,33 @@
 domain: sports_ticketing
 gap_types:
-  unknown_team:
+  customer_address_city_country:
     seed_queries:
-      - "site:wikipedia.org {team_name} NHL team"
-      - "{team_name} hockey team city"
-
-  unknown_venue:
+    - SELECT * FROM ticketing_customers WHERE address IS NULL AND customer_id = '{customer_id}'
+    - SELECT customer_id, zip_postalcode, state_province FROM ticketing_customers
+      WHERE zip_postalcode = '{zip}'
+    - SELECT customer_id, city, state_province FROM ticketing_customers WHERE zip_postalcode
+      IS NULL AND city IS NOT NULL
+  event_dates:
     seed_queries:
-      - "{venue_name} arena city capacity"
-      - "site:wikipedia.org {venue_name} arena"
-
-trusted_sources:
-  - wikipedia.org
-  - nhl.com
-  - nba.com
-  - ticketmaster.ca
+    - SELECT * FROM ticketing_events WHERE date IS NULL AND event_id = '{event_id}'
+    - SELECT event_id, start_time FROM ticketing_events WHERE date IS NULL AND home_team
+      = '{home_team}'
+  missing_away_team:
+    seed_queries:
+    - SELECT * FROM ticketing_events WHERE away_team IS NULL AND event_id = '{event_id}'
+    - SELECT event_id, away_team_id FROM ticketing_events WHERE away_team IS NULL
+      AND date >= '{start_date}' AND date <= '{end_date}'
+    - SELECT event_id, away_team, away_team_id FROM ticketing_events WHERE away_team
+      ILIKE '%{team_name}%'
+  missing_home_team:
+    seed_queries:
+    - SELECT * FROM ticketing_events WHERE home_team IS NULL AND event_id = '{event_id}'
+    - SELECT event_id, home_team_id FROM ticketing_events WHERE home_team IS NULL
+      AND date >= '{start_date}' AND date <= '{end_date}'
+    - SELECT event_id, home_team, home_team_id FROM ticketing_events WHERE home_team
+      ILIKE '%{team_name}%'
+  venue:
+    seed_queries:
+    - SELECT * FROM ticketing_events WHERE venue IS NULL AND event_id = '{event_id}'
+    - SELECT event_id, venue FROM ticketing_events WHERE venue IS NULL AND date >=
+      '{start_date}' AND date <= '{end_date}'

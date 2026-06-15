@@ -2,6 +2,7 @@ from typing import Dict, List, Optional
 
 from db.sqlite_init import get_db_connection
 from db.sqlite_schema_discovery import get_all_schemas, get_table_schema
+from db.schema_config import get_framework_schema
 
 
 _AUTO_MANAGED_COLUMNS = {"id", "imported_at", "cleaned_at", "applied_at", "raised_at", "resolved_at", "updated_at"}
@@ -29,6 +30,7 @@ def _validate_fields(db_path: str, table: str, fields: Dict, *, protected_fields
 
 def insert_raw_data(
     db_path: str,
+    schema: str = None,
     name: str,
     age: Optional[int] = None,
     city: Optional[str] = None,
@@ -57,7 +59,9 @@ def insert_raw_data(
         conn.close()
 
 
-def get_raw_data_by_id(db_path: str, raw_data_id: int) -> Optional[Dict]:
+def get_raw_data_by_id(
+    db_path: str,
+    schema: str = None, raw_data_id: int) -> Optional[Dict]:
     conn = get_db_connection(db_path)
     try:
         cursor = conn.cursor()
@@ -68,7 +72,10 @@ def get_raw_data_by_id(db_path: str, raw_data_id: int) -> Optional[Dict]:
         conn.close()
 
 
-def get_all_raw_data(db_path: str) -> List[Dict]:
+def get_all_raw_data(
+    db_path: str,
+    schema: str = None
+) -> List[Dict]:
     conn = get_db_connection(db_path)
     try:
         cursor = conn.cursor()
@@ -80,6 +87,7 @@ def get_all_raw_data(db_path: str) -> List[Dict]:
 
 def insert_cleaned_data(
     db_path: str,
+    schema: str = None,
     raw_data_id: int,
     name: Optional[str] = None,
     age: Optional[int] = None,
@@ -181,7 +189,9 @@ def delete_raw_data(db_path: str, record_id: int) -> bool:
         conn.close()
 
 
-def get_cleaned_data_for_raw(db_path: str, raw_data_id: int) -> List[Dict]:
+def get_cleaned_data_for_raw(
+    db_path: str,
+    schema: str = None, raw_data_id: int) -> List[Dict]:
     conn = get_db_connection(db_path)
     try:
         cursor = conn.cursor()
@@ -202,6 +212,7 @@ def query_records(
 
 def insert_flag(
     db_path: str,
+    schema: str = None,
     raw_data_id: int,
     flag_type: str,
     severity: str,
@@ -249,6 +260,7 @@ def update_flag_resolution(
 
 def query_flags(
     db_path: str,
+    schema: str = None,
     only_unresolved: bool = True,
     raw_data_id: Optional[int] = None,
     flag_type: Optional[str] = None,

@@ -302,7 +302,7 @@ class DomainResearcher:
         # spell_corrections.csv
         csv_path = output_dir / "spell_corrections.csv"
         if force or not csv_path.exists():
-            with csv_path.open("w", newline="") as f:
+            with csv_path.open("w", newline="", encoding="utf-8") as f:
                 writer = csv.DictWriter(f, fieldnames=["wrong", "right", "source", "confidence"])
                 writer.writeheader()
                 for sc in bundle.spell_corrections:
@@ -321,7 +321,7 @@ class DomainResearcher:
                 pack.gap_type: {"seed_queries": pack.seed_queries}
                 for pack in bundle.query_packs
             }
-            with qp_path.open("w") as f:
+            with qp_path.open("w", encoding="utf-8") as f:
                 yaml.dump(
                     {"domain": bundle.domain, "gap_types": gap_types},
                     f,
@@ -342,7 +342,7 @@ class DomainResearcher:
                 }
                 for cd in bundle.column_descriptions
             ]
-            with meta_path.open("w") as f:
+            with meta_path.open("w", encoding="utf-8") as f:
                 yaml.dump(meta, f, default_flow_style=False, allow_unicode=True)
             written.append(str(meta_path))
 
