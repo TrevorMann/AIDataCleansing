@@ -1,4 +1,5 @@
 from cleaning.gap_classifier import classify_gaps
+from skills._common.web_search_enricher.web_search_enricher import WebSearchEnricher
 
 
 def test_emits_missing_for_null_field():
@@ -51,3 +52,26 @@ def test_multiple_fields_preserves_order():
     # NOTE: classify_gaps cannot emit duplicates from a dict config (keys are
     # unique). Real dedup coverage lives in Task 6, where classifier output is
     # merged with legacy hints + _gap_hints that CAN overlap.
+
+
+def _enricher_with_config(gap_config):
+    enr = WebSearchEnricher(config={"pg_conn": None})
+    enr._gap_config_cache = gap_config   # pre-seed cache; _gap_config short-circuits
+    return enr
+
+
+def test_enricher_emits_classifier_gaps_plus_legacy_hints():
+    enr = _enricher_with_config({"country": {"missing": True}})
+    record = {"country": None, "_unknown_fsa": True, "_gap_hints": ["x"]}
+    gaps = enr._identify_gaps(record)
+    assert "missing:country" in gaps        # from classifier
+    assert "postal_unresolved" in gaps      # legacy downstream signal kept
+    assert "x" in gaps                       # explicit hint passthrough
+
+
+def test_enricher_dedupes_overlapping_classifier_and_hint():
+    # classifier emits missing:country; an explicit hint repeats it -> one entry.
+    enr = _enricher_with_config({"country": {"missing": True}})
+    record = {"country": None, "_gap_hints": ["missing:country"]}
+    gaps = enr._identify_gaps(record)
+    assert gaps.count("missing:country") == 1
