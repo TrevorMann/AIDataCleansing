@@ -27,10 +27,10 @@
 **Modify:**
 - `db/pg_init.py` — add `gap_detection` migration DO-block (mirrors migration 006 pattern).
 - `db/sqlite_init.py` — add `gap_detection` column to `column_metadata` create + a migrate helper.
-- `db/pg_schema_discovery.py` — add `get_gap_detection(db_path, domain, schema=None)`.
+- `db/pg_query_memory.py` — add conn-based `gap_detection_for(conn, domain, schema=None)`, the **single Postgres SQL source** (enricher holds a live `pg_conn`, mirroring `top_queries_for`).
+- `db/pg_schema_discovery.py` — add `get_gap_detection(db_path, domain, schema=None)` that **delegates** to `gap_detection_for` (no duplicated SQL).
 - `db/sqlite_schema_discovery.py` — add `get_gap_detection(db_path, domain)`.
 - `db/schema_discovery.py` — add `get_gap_detection` dispatcher entry.
-- `db/pg_query_memory.py` — add conn-based `gap_detection_for(conn, domain, schema=None)` (the enricher holds a live `pg_conn`, mirroring the existing `top_queries_for`).
 - `cleaning/flags.py` — add `flags_from_gaps()` + internal `_GAP_TO_FLAG` mapping.
 - `skills/_common/web_search_enricher/web_search_enricher.py` — refactor `_identify_gaps` to delegate to `classify_gaps`.
 - `data/seeds/real_estate/column_metadata.yaml` — add `gap_detection` to relevant columns.
@@ -134,6 +134,9 @@ def build_gap(verb: str, field: Union[str, Sequence[str]], qualifier: Optional[s
 
 
 def parse_gap(gap: str) -> ParsedGap:
+    """Split a gap string into its parts. LENIENT by design — does NOT validate
+    the verb. Callers needing guarantees must also call is_valid_gap().
+    """
     qualifier = None
     body = gap
     if "|" in body:
@@ -221,10 +224,13 @@ def test_unknown_verbs_not_built_in_v1():
     assert classify_gaps(record, config) == []
 
 
-def test_multiple_fields_dedup_and_order():
+def test_multiple_fields_preserves_order():
     config = {"postal_code": {"missing": True}, "country": {"missing": True}}
     record = {"postal_code": None, "country": ""}
     assert classify_gaps(record, config) == ["missing:postal_code", "missing:country"]
+    # NOTE: classify_gaps cannot emit duplicates from a dict config (keys are
+    # unique). Real dedup coverage lives in Task 6, where classifier output is
+    # merged with legacy hints + _gap_hints that CAN overlap.
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -391,44 +397,70 @@ git commit -m "feat: add gap_detection column to column_metadata"
 ## Task 4: Backend-agnostic `get_gap_detection` reader
 
 **Files:**
-- Modify: `db/pg_schema_discovery.py` (next to `get_column_metadata`, ~line 102)
+- Modify: `db/pg_query_memory.py` (conn-based `gap_detection_for` — the single PG SQL source, next to `top_queries_for`)
+- Modify: `db/pg_schema_discovery.py` (db_path `get_gap_detection`, delegates to `gap_detection_for`, ~line 102)
 - Modify: `db/sqlite_schema_discovery.py` (next to `get_column_metadata`, ~line 70)
 - Modify: `db/schema_discovery.py` (add dispatcher entry near the other `get_column_metadata` dispatch, ~line 42)
-- Test: `tests/cleaning/test_gap_classifier.py` is pure; the reader is exercised by the SQLite check below (no new unit test — it is thin DB glue, consistent with existing untested readers like `get_column_metadata`).
+- Test: `tests/cleaning/test_gap_classifier.py` is pure; the readers are exercised by the SQLite check below (no new unit test — thin DB glue, consistent with existing untested readers like `get_column_metadata`).
 
 Returns `{column_name: gap_detection_dict}` aggregated across the domain's tables. JSON parsed to a dict.
 
-- [ ] **Step 1: Add the Postgres reader to `db/pg_schema_discovery.py`**
+**Single Postgres SQL source.** The conn-based `gap_detection_for` (Step 1) is the
+one place the Postgres `column_metadata` query lives; the db_path dispatcher reader
+(Step 2) opens a connection and **delegates** to it — no duplicated SQL. SQLite needs
+its own reader (Step 3) because of `?` placeholders and no schema prefix.
+
+- [ ] **Step 1: Add the conn-based reader to `db/pg_query_memory.py` (the single PG SQL source)**
+
+The enricher holds a live `pg_conn` (not a `db_path`) and already reads pattern
+memory via conn-based helpers here. This is the canonical Postgres reader:
+
+```python
+def gap_detection_for(conn, domain: str, schema: str = None) -> dict:
+    """Return {column_name: gap_detection_dict} for a domain using a live conn.
+
+    Mirrors top_queries_for: postgres-first, best-effort. Returns {} on ANY DB
+    error (missing table, bad schema, etc.) — intentional: the classifier then
+    sees no config and emits no gaps, degrading gracefully rather than crashing.
+    """
+    import json
+    if schema is None:
+        schema = get_framework_schema()
+    out = {}
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT column_name, gap_detection FROM {schema}.column_metadata "
+                f"WHERE domain = %s AND gap_detection IS NOT NULL",
+                (domain,),
+            )
+            for column_name, cfg in cur.fetchall():
+                if isinstance(cfg, str):
+                    cfg = json.loads(cfg)
+                if cfg:
+                    out[column_name] = cfg
+    except Exception:
+        return {}  # best-effort: classifier falls back to empty config
+    return out
+```
+
+(`get_framework_schema` is already imported at the top of `db/pg_query_memory.py`.)
+
+- [ ] **Step 2: Add the db_path dispatcher reader to `db/pg_schema_discovery.py` (delegates — no SQL dup)**
 
 ```python
 def get_gap_detection(db_path: str, domain: str, schema: str = None) -> dict:
-    """Return {column_name: gap_detection_dict} for a domain, across its tables."""
-    if schema is None:
-        schema = get_framework_schema()
+    """db_path entry point. Opens a conn and delegates to the single PG SQL
+    source (pg_query_memory.gap_detection_for) so there is one query, not two."""
+    from db.pg_query_memory import gap_detection_for
     conn = get_db_connection(db_path)
     try:
-        cursor = conn.cursor()
-        cursor.execute(
-            f"SELECT column_name, gap_detection FROM {schema}.column_metadata "
-            f"WHERE domain = %s AND gap_detection IS NOT NULL",
-            (domain,),
-        )
-        out = {}
-        for row in cursor.fetchall():
-            cfg = row["gap_detection"]
-            if isinstance(cfg, str):
-                import json
-                cfg = json.loads(cfg)
-            if cfg:
-                out[row["column_name"]] = cfg
-        return out
-    except Exception:
-        return {}
+        return gap_detection_for(conn, domain, schema=schema)
     finally:
         conn.close()
 ```
 
-- [ ] **Step 2: Add the SQLite reader to `db/sqlite_schema_discovery.py`**
+- [ ] **Step 3: Add the SQLite reader to `db/sqlite_schema_discovery.py`**
 
 ```python
 def get_gap_detection(db_path: str, domain: str) -> dict:
@@ -449,53 +481,19 @@ def get_gap_detection(db_path: str, domain: str) -> dict:
                 out[row["column_name"]] = json.loads(raw)
         return out
     except Exception:
-        return {}
+        return {}  # best-effort: classifier falls back to empty config on any DB error
     finally:
         conn.close()
 ```
 
-- [ ] **Step 3: Add the dispatcher entry to `db/schema_discovery.py`**
+- [ ] **Step 4: Add the dispatcher entry to `db/schema_discovery.py`**
 
 ```python
 def get_gap_detection(db_path: str, domain: str):
     return _impl().get_gap_detection(db_path, domain)
 ```
 
-- [ ] **Step 3b: Add the conn-based reader to `db/pg_query_memory.py`**
-
-The enricher holds a live `pg_conn` (not a `db_path`) and already reads pattern
-memory via conn-based helpers here. Add a matching one:
-
-```python
-def gap_detection_for(conn, domain: str, schema: str = None) -> dict:
-    """Return {column_name: gap_detection_dict} for a domain using a live conn.
-
-    Mirrors top_queries_for: postgres-first, best-effort (returns {} on error).
-    """
-    import json
-    if schema is None:
-        schema = get_framework_schema()
-    out = {}
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                f"SELECT column_name, gap_detection FROM {schema}.column_metadata "
-                f"WHERE domain = %s AND gap_detection IS NOT NULL",
-                (domain,),
-            )
-            for column_name, cfg in cur.fetchall():
-                if isinstance(cfg, str):
-                    cfg = json.loads(cfg)
-                if cfg:
-                    out[column_name] = cfg
-    except Exception:
-        return {}
-    return out
-```
-
-(`get_framework_schema` is already imported at the top of `db/pg_query_memory.py`.)
-
-- [ ] **Step 4: Verify end-to-end on SQLite**
+- [ ] **Step 5: Verify end-to-end on SQLite**
 
 Run:
 ```bash
@@ -509,10 +507,10 @@ print(get_gap_detection(p, 'real_estate'))"
 ```
 Expected: `{'postal_code': {'missing': True, 'discriminator': 'country'}}`
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add db/pg_schema_discovery.py db/sqlite_schema_discovery.py db/schema_discovery.py
+git add db/pg_query_memory.py db/pg_schema_discovery.py db/sqlite_schema_discovery.py db/schema_discovery.py
 git commit -m "feat: backend-agnostic get_gap_detection reader"
 ```
 
@@ -525,6 +523,12 @@ git commit -m "feat: backend-agnostic get_gap_detection reader"
 - Test: `tests/cleaning/test_gap_to_flag.py`
 
 Implements spec §6: data-defect flags derive from gap_type; process flags untouched. Mapping keyed on `(verb, first_field)`; unmapped gaps yield no flag.
+
+**Pre-check (already verified):** every `FlagType` the mapping references —
+`UNKNOWN_COUNTRY`, `POSTAL_UNRESOLVED`, `MUNICIPALITY_UNRESOLVED`, `POSTAL_AMBIGUOUS` —
+already exists in `cleaning/flags.py` (lines 15-19). So the Step 1 test fails on the
+missing `flags_from_gaps` symbol, not an `AttributeError` on the enum. If you ever add
+a mapping for a verb/field whose flag does NOT exist, add the enum value first.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -614,38 +618,52 @@ git commit -m "feat: derive FlagType from gap-type strings"
 
 `_identify_gaps` becomes a thin caller of `classify_gaps`. Legacy downstream signals (`_unknown_fsa`, `_municipality_confidence`) map to deferred `ambiguous`/unresolved verbs, so v1 keeps them as legacy hint strings to avoid regressing `query_pattern_memory` lookups. Config is loaded once and cached on the instance.
 
+**Architectural note (dispatcher exception):** the enricher reads gap config via the
+conn-based `gap_detection_for(self.conn, …)` rather than the `db/schema_discovery`
+db_path dispatcher. This is deliberate and consistent: the enricher is injected a live
+`pg_conn` and does *all* its DB access conn-based (`top_queries_for`,
+`record_query_outcome`). Routing one read through the db_path dispatcher would make the
+enricher *more* internally inconsistent. The dispatcher's `get_gap_detection`
+delegates to the same `gap_detection_for`, so there is still one Postgres SQL source.
+
 - [ ] **Step 1: Write the failing test**
+
+Instantiate the real `WebSearchEnricher` with a config (no live conn) and pre-seed
+the config cache so no DB is touched — this tests observable behavior, not method
+plumbing.
 
 ```python
 # append to tests/cleaning/test_gap_classifier.py
-class _FakeEnricher:
-    """Minimal stand-in exercising the refactored _identify_gaps logic."""
-    def __init__(self, gap_config):
-        self._gap_config_cache = gap_config
-        self.domain = "real_estate"
-        self.conn = None
+from skills._common.web_search_enricher.web_search_enricher import WebSearchEnricher
 
-    # bind the real method under test
-    from skills._common.web_search_enricher.web_search_enricher import (
-        WebSearchEnricher as _W,
-    )
-    _identify_gaps = _W._identify_gaps
-    _gap_config = _W._gap_config
+
+def _enricher_with_config(gap_config):
+    enr = WebSearchEnricher(config={"pg_conn": None})
+    enr._gap_config_cache = gap_config   # pre-seed cache; _gap_config short-circuits
+    return enr
 
 
 def test_enricher_emits_classifier_gaps_plus_legacy_hints():
-    enr = _FakeEnricher({"country": {"missing": True}})
+    enr = _enricher_with_config({"country": {"missing": True}})
     record = {"country": None, "_unknown_fsa": True, "_gap_hints": ["x"]}
     gaps = enr._identify_gaps(record)
     assert "missing:country" in gaps        # from classifier
     assert "postal_unresolved" in gaps      # legacy downstream signal kept
     assert "x" in gaps                       # explicit hint passthrough
+
+
+def test_enricher_dedupes_overlapping_classifier_and_hint():
+    # classifier emits missing:country; an explicit hint repeats it -> one entry.
+    enr = _enricher_with_config({"country": {"missing": True}})
+    record = {"country": None, "_gap_hints": ["missing:country"]}
+    gaps = enr._identify_gaps(record)
+    assert gaps.count("missing:country") == 1
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `python -m pytest tests/cleaning/test_gap_classifier.py::test_enricher_emits_classifier_gaps_plus_legacy_hints -v`
-Expected: FAIL (`AttributeError: ... '_gap_config'` or assertion on `missing:country`).
+Run: `python -m pytest tests/cleaning/test_gap_classifier.py -k enricher -v`
+Expected: FAIL (`AttributeError` on `_gap_config` / assertion on `missing:country`) — the refactor in Step 3 doesn't exist yet.
 
 - [ ] **Step 3: Refactor `_identify_gaps` and add `_gap_config`**
 
@@ -712,6 +730,12 @@ git commit -m "refactor: web_search_enricher delegates gap detection to classify
 - Test: covered by the SQLite end-to-end check in this task (seeder I/O, consistent with the untested existing seeder).
 
 Adds `gap_detection` to the YAML and threads it through parse → upsert. v1 declares only `missing` (+ a `country` discriminator on postal_code) per the design's worked example.
+
+**Placeholder syntax:** the existing seeder's `upsert` already uses SQLite `?`
+placeholders (`column_metadata.py:48`). The new code below **matches that existing
+syntax** to stay consistent — it does not introduce a new pattern. Making the seeder
+layer backend-portable (`?` vs `%s`) is a pre-existing concern that affects the whole
+seeder and is **out of scope** for this plan.
 
 - [ ] **Step 1: Add `gap_detection` to the YAML**
 
