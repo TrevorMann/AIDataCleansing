@@ -6,12 +6,28 @@ domain: real_estate
 
 tables:
   raw_data:
+    - column: postal_code
+      description: >-
+        Postal/ZIP code. Format and validity depend on country.
+      gap_detection:
+        missing: true
+        discriminator: country
+
+    - column: country
+      description: >-
+        ISO-ish country of the listing; drives postal and municipality logic.
+      gap_detection:
+        missing: true
+
     # Override base municipality description — real estate context is specific
     - column: municipality
       description: >-
         Real estate neighbourhood — the name buyers search, not administrative boundaries.
         Examples: The Annex, North York, Plateau-Mont-Royal, Little Italy, Upper East Side.
         Must reflect buyer search behaviour, not city/district admin names.
+      gap_detection:
+        missing: true
+        discriminator: country
 
     # Extra columns added by add_columns_to_listings migration
     - column: normalized_municipality

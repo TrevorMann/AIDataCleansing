@@ -26,15 +26,18 @@ class ColumnMetadataSeeder(Seeder):
             return yaml.safe_load(f)
 
     def parse(self, payload: Any) -> list:
+        import json
         domain = payload.get("domain", self.domain)
         rows = []
         for table_name, cols in payload.get("tables", {}).items():
             for entry in cols:
+                gd = entry.get("gap_detection")
                 rows.append({
-                    "domain":      domain,
-                    "table_name":  table_name,
-                    "column_name": entry["column"],
-                    "description": entry.get("description", "").strip(),
+                    "domain":        domain,
+                    "table_name":    table_name,
+                    "column_name":   entry["column"],
+                    "description":   entry.get("description", "").strip(),
+                    "gap_detection": json.dumps(gd) if gd else None,
                 })
         return rows
 
@@ -44,12 +47,14 @@ class ColumnMetadataSeeder(Seeder):
         for row in rows:
             cursor.execute(
                 """
-                INSERT INTO column_metadata (domain, table_name, column_name, description)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO column_metadata (domain, table_name, column_name, description, gap_detection)
+                VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT (domain, table_name, column_name)
-                DO UPDATE SET description = excluded.description
+                DO UPDATE SET description = excluded.description,
+                              gap_detection = excluded.gap_detection
                 """,
-                (row["domain"], row["table_name"], row["column_name"], row["description"]),
+                (row["domain"], row["table_name"], row["column_name"],
+                 row["description"], row["gap_detection"]),
             )
             count += 1
         conn.commit()
