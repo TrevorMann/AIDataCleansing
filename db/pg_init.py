@@ -135,6 +135,19 @@ def init_db(db_path: str, schema: str = "data_details") -> None:
                 END IF;
             END $$
         """)
+        # Migration 007: per-field gap detection config
+        cursor.execute(f"""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = '{schema}' AND table_name='column_metadata' AND column_name='gap_detection'
+                ) THEN
+                    ALTER TABLE {schema}.column_metadata
+                        ADD COLUMN gap_detection JSONB DEFAULT NULL;
+                END IF;
+            END $$
+        """)
         cursor.execute(
             f"""
             CREATE TABLE IF NOT EXISTS {schema}.column_profiles (

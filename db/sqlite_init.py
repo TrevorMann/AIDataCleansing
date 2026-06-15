@@ -105,6 +105,7 @@ def init_db(db_path: str) -> None:
             table_name  TEXT NOT NULL,
             column_name TEXT NOT NULL,
             description TEXT,
+            gap_detection TEXT DEFAULT NULL,
             PRIMARY KEY (domain, table_name, column_name)
         )
         """
@@ -127,6 +128,7 @@ def init_db(db_path: str) -> None:
     )
 
     _migrate_column_metadata_add_domain(conn)
+    _migrate_column_metadata_add_gap_detection(conn)
     _seed_column_metadata(cursor)
     _seed_column_profiles(cursor)
 
@@ -244,6 +246,15 @@ def _migrate_column_metadata_add_domain(conn) -> None:
     cursor.execute("DROP TABLE column_metadata")
     cursor.execute("ALTER TABLE column_metadata_new RENAME TO column_metadata")
     conn.commit()
+
+
+def _migrate_column_metadata_add_gap_detection(conn) -> None:
+    """Add gap_detection column to column_metadata if not present (idempotent)."""
+    cursor = conn.cursor()
+    cols = {row[1] for row in cursor.execute("PRAGMA table_info(column_metadata)").fetchall()}
+    if "gap_detection" not in cols:
+        cursor.execute("ALTER TABLE column_metadata ADD COLUMN gap_detection TEXT DEFAULT NULL")
+        conn.commit()
 
 
 def _seed_column_metadata(cursor) -> None:
