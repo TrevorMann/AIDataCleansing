@@ -123,8 +123,11 @@ Why `column_metadata` and not a new table or `memory.yaml`:
 A single function replaces the scattered logic:
 
 ```python
-def classify_gaps(record: dict, domain: str) -> list[str]:
-    """Read column_metadata.gap_detection and emit gap_type strings for a record."""
+# Implemented as a PURE function: the gap_detection config is loaded separately
+# (db.schema_discovery.get_gap_detection / pg_query_memory.gap_detection_for) and
+# passed in, so the classifier is DB-free and trivially testable.
+def classify_gaps(record: dict, gap_config: dict) -> list[str]:
+    """Emit gap_type strings for a record from a pre-loaded gap_detection config."""
 ```
 
 - **v1 builds the `missing` path only**: for each field with `missing: true`, if

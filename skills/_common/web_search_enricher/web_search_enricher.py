@@ -110,6 +110,9 @@ class WebSearchEnricher(BaseSkill):
 
         Uses the live self.conn (pg_conn), mirroring how _get_queries reads
         pattern memory. Best-effort: returns {} when no conn / on any error.
+        Postgres-primary by design: on a SQLite backend pg_conn is never
+        injected, so config is {} and classify_gaps emits no gaps — the legacy
+        hint strings in _identify_gaps still fire. Not a bug to "fix".
         """
         cached = getattr(self, "_gap_config_cache", None)
         if cached is not None:
