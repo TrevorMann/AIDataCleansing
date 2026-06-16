@@ -90,6 +90,10 @@ class DomainInitializer:
         if domain_entry is None:
             return False
         removed = domain_entry.pop("tables", None) is not None
+        # `schema` is also written by register_tables, so an entry created solely
+        # by initialization holds {tables, schema}; drop schema too so it counts
+        # as empty and the whole entry is removed (per this method's contract).
+        domain_entry.pop("schema", None)
         if not domain_entry:
             del data["domains"][self.domain]
         self._save(data)

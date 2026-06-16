@@ -62,7 +62,7 @@ class TestPhase0:
         di = DomainInitializer("sports_ticketing", registry_path=reg)
         conn = MagicMock()
 
-        tables = phase0_register_tables(di, conn)
+        tables, _ = phase0_register_tables(di, conn)
         assert tables == ["events", "tickets"]
         assert "Using registered tables" in capsys.readouterr().out
 
@@ -76,7 +76,7 @@ class TestPhase0:
         conn = _mock_conn(["events", "tickets", "customers"])
 
         with patch("builtins.input", return_value="1,2,3"):
-            tables = phase0_register_tables(di, conn)
+            tables, _ = phase0_register_tables(di, conn)
 
         assert set(tables) == {"events", "tickets", "customers"}
         data = json.loads(reg.read_text())
@@ -396,5 +396,5 @@ class TestCmdRefreshSeeds:
             mock_p1.return_value = {"events": []}
             cmd_refresh_seeds("sports_ticketing", di, conn)
 
-        mock_p1.assert_called_once_with(["events"], conn)
+        mock_p1.assert_called_once_with(["events"], conn, "public")
         mock_p3.assert_called_once()
