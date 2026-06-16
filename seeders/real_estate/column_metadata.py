@@ -42,20 +42,12 @@ class ColumnMetadataSeeder(Seeder):
         return rows
 
     def upsert(self, conn, rows: list) -> int:
-        cursor = conn.cursor()
-        count = 0
-        for row in rows:
-            cursor.execute(
-                """
-                INSERT INTO column_metadata (domain, table_name, column_name, description, gap_detection)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT (domain, table_name, column_name)
-                DO UPDATE SET description = excluded.description,
-                              gap_detection = excluded.gap_detection
-                """,
-                (row["domain"], row["table_name"], row["column_name"],
-                 row["description"], row["gap_detection"]),
-            )
-            count += 1
-        conn.commit()
-        return count
+        from db.upsert import bulk_upsert
+
+        return bulk_upsert(
+            conn,
+            "column_metadata",
+            rows,
+            conflict_cols=["domain", "table_name", "column_name"],
+            update_cols=["description", "gap_detection"],
+        )
