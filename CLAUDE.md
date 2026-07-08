@@ -8,6 +8,11 @@ Before implementing:
 - If multiple interpretations exist, present them.
 - If a simpler approach exists, say so.
 - If something is unclear, stop. Name what's confusing.
+- **Ground every reference to existing code.** In specs and plans, any snippet that
+  names an existing symbol (enum value, function, table/column, SQL placeholder style,
+  import path) is an assertion about the codebase — verify it by reading that exact
+  code before writing it, never infer it from memory or pattern. Most review findings
+  trace back to inferred-not-read references.
 
 ## 2. Simplicity First
 Minimum code that solves the problem. Nothing speculative.
@@ -126,6 +131,11 @@ Annotations stored in `column_metadata` with `is_llm_generated=TRUE` and a `conf
 Write a test that reproduces it, then make it pass
 Write tests for invalid inputs, then make them pass
 
+Test observable behavior, not plumbing. Prefer instantiating the real object with
+injected or mocked dependencies over binding unbound methods, stubbing internals, or
+asserting on private call sequences. If a test breaks when code is renamed but
+behavior is unchanged, it's testing the wrong thing.
+
 ## Run Tests
 
 ```bash
@@ -159,6 +169,15 @@ result = team.process_record(record)
 **Primary path — `initialize_domain.py`.** A single orchestrator that walks the
 schema-first flow against your existing database (see
 `docs/runbooks/initialize-domain.md` for a full step-by-step runbook):
+
+**Schema generation policy.** The tool **never creates or alters the user's source
+tables** — those are brought by the user, their schema already exists, and the pipeline
+only reads them. The tool **does** generate **auxiliary tables** — lookup / cleaning /
+reference / cache tables (e.g. `spell_corrections`, `query_pattern_memory`,
+`municipality_lookup_cache`, and integration-fed reference tables) — keyed so they join
+back to the user's data. Generating those auxiliary tables and researching the data to
+fill them is the agent's core value; generating DDL for the user's *main* tables is out
+of scope.
 
 ```bash
 # Full first-time initialization (interactive, 4 phases)

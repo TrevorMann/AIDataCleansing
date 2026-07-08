@@ -117,6 +117,17 @@ def get_column_metadata(db_path: str, table_name: str, schema: str = None) -> Di
         conn.close()
 
 
+def get_gap_detection(db_path: str, domain: str, schema: str = None) -> dict:
+    """db_path entry point. Opens a conn and delegates to the single PG SQL
+    source (pg_query_memory.gap_detection_for) so there is one query, not two."""
+    from db.pg_query_memory import gap_detection_for
+    conn = get_db_connection(db_path)
+    try:
+        return gap_detection_for(conn, domain, schema=schema)
+    finally:
+        conn.close()
+
+
 def get_column_profiles(db_path: str, table_name: str, schema: str = None) -> Dict[str, Dict]:
     if schema is None:
         schema = get_framework_schema()

@@ -210,6 +210,9 @@ def log_usage(backend: str, usage) -> None:
     PATH A — OpenRouter: logs input/output tokens only
     PATH B — Anthropic:  logs input, cache hits, cache creation, output tokens + cache rate
     """
+    if usage is None:
+        logger.debug(f"[{backend}] usage not reported by API")
+        return
     if backend == OPENROUTER:
         logger.info(
             f"[OpenRouter] tokens: input={usage.input_tokens}, output={usage.output_tokens}"

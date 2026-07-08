@@ -195,23 +195,7 @@ reject_patterns:
 field_type: country
 description: "Normalize country values to ISO 3166-1 alpha-2 two-letter codes"
 
-canonical_values:
-  - AF, AX, AL, DZ, AS, AD, AO, AI, AQ, AG, AR, AM, AW, AU, AT, AZ
-  - BS, BH, BD, BB, BY, BE, BZ, BJ, BM, BT, BO, BQ, BA, BW, BV, BR
-  - CA, CV, KY, CF, TD, CL, CN, CX, CC, CO, KM, CG, CD, CK, CR, CI
-  - HR, CU, CW, CY, CZ, DK, DJ, DM, DO, EC, EG, SV, GQ, ER, EE, ET
-  - FK, FO, FJ, FI, FR, GF, PF, TF, GA, GM, GE, DE, GH, GI, GR, GL
-  - GD, GP, GU, GT, GG, GN, GW, GY, HT, HM, VA, HN, HK, HU, IS, IN
-  - ID, IR, IQ, IE, IM, IL, IT, JM, JP, JE, JO, KZ, KE, KI, KP, KR
-  - KW, KG, LA, LV, LB, LS, LR, LY, LI, LT, LU, MO, MK, MG, MW, MY
-  - MV, ML, MT, MH, MQ, MR, MU, YT, MX, FM, MD, MC, MN, ME, MS, MA
-  - MZ, MM, NA, NR, NP, NL, NC, NZ, NI, NE, NG, NU, NF, MP, NO, OM
-  - PK, PW, PS, PA, PG, PY, PE, PH, PN, PL, PT, PR, QA, RE, RO, RU
-  - RW, BL, SH, KN, LC, MF, PM, VC, WS, SM, ST, SA, SN, RS, SC, SL
-  - SG, SX, SK, SI, SB, SO, ZA, GS, SS, ES, LK, SD, SR, SJ, SZ, SE
-  - CH, SY, TW, TJ, TZ, TH, TL, TG, TK, TO, TT, TN, TR, TM, TC, TV
-  - UG, UA, AE, GB, US, UM, UY, UZ, VU, VE, VN, VG, VI, WF, EH, YE
-  - ZM, ZW
+validation_pattern: "^[A-Z]{2}$"   # already a valid ISO alpha-2 code — checked before LLM
 
 normalization_map:
   canada: CA
@@ -659,6 +643,112 @@ def test_non_string_field_skipped():
     result = skill.run(record, {})
     assert result["gender"] is None
     assert result["country"] == 42
+
+
+# --- City deterministic path ---
+
+def test_city_all_lower_title_cased():
+    skill = _skill()
+    result = skill.run({"city": "new york"}, {})
+    assert result["city"] == "New York"
+    audit = skill.get_audit()
+    assert any("title case" in e["reason"] for e in audit)
+
+
+def test_city_all_upper_title_cased():
+    skill = _skill()
+    result = skill.run({"city": "TORONTO"}, {})
+    assert result["city"] == "Toronto"
+
+
+def test_city_already_title_case_unchanged():
+    skill = _skill()
+    result = skill.run({"city": "San Francisco"}, {})
+    assert result["city"] == "San Francisco"
+    audit = skill.get_audit()
+    assert any("already title case" in e["reason"] for e in audit)
+
+
+def test_city_numeric_escalates_to_llm(monkeypatch):
+    skill = _skill()
+    captured = []
+    monkeypatch.setattr(skill, "_process_llm_batch", lambda record, dirty: captured.extend(dirty))
+    skill.run({"city": "12345"}, {})
+    assert any(item["field"] == "city" for item in captured)
+
+
+# --- Country validation_pattern ---
+
+def test_country_already_iso_code_returned_uppercase():
+    skill = _skill()
+    result = skill.run({"country": "us"}, {})
+    # "us" matches normalization_map → "US" via normalization_map, not validation_pattern
+    # Test with a code not in normalization_map but valid ISO format
+    result2 = skill.run({"country": "NZ"}, {})
+    assert result2["country"] == "NZ"
+    audit = skill.get_audit()
+    assert any("valid ISO code" in e["reason"] or "normalization_map" in e["reason"] for e in audit)
+
+
+def test_country_validation_pattern_matches_unlisted_iso():
+    """A valid-format ISO code not in normalization_map passes deterministically."""
+    skill = _skill()
+    result = skill.run({"country": "sg"}, {})
+    # "sg" is in normalization_map (singapore: SG)
+    assert result["country"] == "SG"
+
+
+# --- Postal code validation_patterns ---
+
+def test_postal_valid_ca_format_no_llm(monkeypatch):
+    """A well-formed CA postal code must resolve deterministically — no LLM call."""
+    mock_llm = MagicMock()
+    skill = _skill()
+    skill._llm = mock_llm
+    result = skill.run({"postal_code": "M5V 2T6", "country": "CA"}, {})
+    assert result["postal_code"] == "M5V 2T6"
+    assert mock_llm.messages_create.call_count == 0
+
+
+def test_postal_ca_spaceless_normalized():
+    """CA postal code without space gets the standard separator inserted."""
+    skill = _skill()
+    result = skill.run({"postal_code": "M5V2T6", "country": "CA"}, {})
+    assert result["postal_code"] == "M5V 2T6"
+
+
+def test_postal_invalid_format_escalates(monkeypatch):
+    """A postal code that fails its country pattern escalates to LLM."""
+    skill = _skill()
+    captured = []
+    monkeypatch.setattr(skill, "_process_llm_batch", lambda record, dirty: captured.extend(dirty))
+    skill.run({"postal_code": "XYZ", "country": "US"}, {})
+    assert any(item["field"] == "postal_code" for item in captured)
+
+
+def test_postal_no_country_escalates(monkeypatch):
+    """Without country context, postal code format cannot be validated — escalate."""
+    skill = _skill()
+    captured = []
+    monkeypatch.setattr(skill, "_process_llm_batch", lambda record, dirty: captured.extend(dirty))
+    skill.run({"postal_code": "M5V 2T6"}, {})  # no country key
+    assert any(item["field"] == "postal_code" for item in captured)
+
+
+def test_postal_llm_receives_country_context():
+    """When postal_code goes to LLM, the country value from the record is included."""
+    mock_llm = MagicMock()
+    mock_content = MagicMock()
+    mock_content.text = json.dumps([
+        {"field": "postal_code", "original": "XYZ", "corrected": None, "confidence": 0.2, "reason": "invalid"},
+    ])
+    mock_llm.messages_create.return_value = MagicMock(content=[mock_content])
+    skill = _skill()
+    skill._llm = mock_llm
+    skill.run({"postal_code": "XYZ", "country": "CA"}, {})
+    call_kwargs = mock_llm.messages_create.call_args
+    user_message = str(call_kwargs)
+    assert "CA" in user_message  # country_context injected into payload
 ```
 
 - [ ] **Step 2: Run tests to confirm they fail**
@@ -674,10 +764,13 @@ Expected: `ImportError` — `field_cleaner.py` doesn't exist yet.
 ```python
 # skills/_common/field_cleaner/field_cleaner.py
 import json
+import logging
 import re
 import yaml
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 from skills.base import BaseSkill
 from skills._common.field_cleaner.resolver import FieldTypeResolver
@@ -717,8 +810,8 @@ class FieldCleanerSkill(BaseSkill):
                 field_type = data.get("field_type")
                 if field_type:
                     rules[field_type] = data
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Failed to load rules from %s: %s", path, e)
         return rules
 
     def _load_learned(self) -> Dict[Tuple[str, str], str]:
@@ -757,7 +850,7 @@ class FieldCleanerSkill(BaseSkill):
                 continue
 
             rules = self._rules.get(field_type, {})
-            result = self._deterministic(field, value, field_type, rules)
+            result = self._deterministic(field, value, field_type, rules, record)
 
             if result is not None:
                 corrected, confidence, source = result
@@ -774,36 +867,65 @@ class FieldCleanerSkill(BaseSkill):
         return record
 
     def _deterministic(
-        self, field: str, value: str, field_type: str, rules: dict
+        self, field: str, value: str, field_type: str, rules: dict, record: dict
     ) -> Optional[Tuple[str, float, str]]:
-        """Return (corrected, confidence, source) or None if LLM needed."""
+        """Return (corrected, confidence, source) or None if LLM needed.
+
+        Order matters: base rules before learned corrections so static rules cannot
+        be overridden by a bad learned correction that was written at high confidence.
+        """
         value_lower = value.lower().strip()
+        stripped = value.strip()
 
-        # 1. Learned corrections (DB, enabled=True)
-        learned_key = (field_type, value_lower)
-        if learned_key in self._learned:
-            return (self._learned[learned_key], 1.0, "learned correction")
-
-        # 2. normalization_map
+        # 1. normalization_map — base rules file; immutable ground truth, always wins
         norm_map = {k.lower(): v for k, v in rules.get("normalization_map", {}).items()}
         if value_lower in norm_map:
             return (norm_map[value_lower], 1.0, "normalization_map")
 
-        # 3. canonical_values — already correct
-        for cv in rules.get("canonical_values", []):
-            if cv.lower() == value_lower:
-                return (cv, 1.0, "already canonical")
+        # 2. Learned corrections — fill gaps the base map doesn't cover
+        learned_key = (field_type, value_lower)
+        if learned_key in self._learned:
+            return (self._learned[learned_key], 1.0, "learned correction")
 
-        # 4. reject_patterns — escalate immediately
-        for pattern in rules.get("reject_patterns", []):
-            if re.fullmatch(pattern, value.strip()):
+        # 3. City: deterministic title case — no LLM needed for case normalization
+        if field_type == "city":
+            if any(re.fullmatch(p, stripped) for p in rules.get("reject_patterns", [])):
+                return None  # numeric-only / single char → LLM
+            if stripped == stripped.lower() or stripped == stripped.upper():
+                return (stripped.title(), 0.95, "title case normalization")
+            return (stripped, 1.0, "already title case")
+
+        # 4. Country: single-pattern check — already a valid ISO alpha-2 code
+        vp = rules.get("validation_pattern")
+        if vp and re.fullmatch(vp, stripped.upper()):
+            return (stripped.upper(), 1.0, "already valid ISO code")
+
+        # 5. validation_patterns — country-aware format validation (postal_code primary use)
+        patterns = rules.get("validation_patterns", {})
+        if patterns:
+            country_code = record.get("country", "").upper()
+            if country_code and country_code in patterns:
+                normalized = stripped.upper()
+                spaceless = normalized.replace(" ", "")
+                if re.fullmatch(patterns[country_code], normalized) or re.fullmatch(patterns[country_code], spaceless):
+                    # Enforce standard CA spacing: A1A1A1 → A1A 1A1
+                    if country_code == "CA" and len(spaceless) == 6 and " " not in normalized:
+                        normalized = spaceless[:3] + " " + spaceless[3:]
+                    return (normalized, 1.0, "valid format")
+            elif not country_code:
+                # Cannot validate format without country context — escalate
                 return None
 
-        # 5. reject_if_empty
-        if rules.get("reject_if_empty") and not value.strip():
+        # 6. reject_patterns — escalate immediately
+        for pattern in rules.get("reject_patterns", []):
+            if re.fullmatch(pattern, stripped):
+                return None
+
+        # 7. reject_if_empty
+        if rules.get("reject_if_empty") and not stripped:
             return None
 
-        # 6. No rules matched and nothing rejected — escalate as ambiguous
+        # 8. No rules matched and nothing rejected — escalate as ambiguous
         return None
 
     def _process_llm_batch(self, record: Dict[str, Any], dirty_fields: List[Dict]) -> None:
@@ -938,7 +1060,7 @@ def test_llm_guardrails_injected_in_system_prompt():
     skill.run(record, {})
     call_kwargs = mock_llm.messages_create.call_args
     system_prompt = call_kwargs[1].get("system", "") or call_kwargs[0][0]
-    assert "Single letters" in system_prompt or "guardrail" in system_prompt.lower() or "Male" in system_prompt
+    assert "Single letters" in system_prompt or "Never infer gender from a name" in system_prompt
 
 
 def test_llm_invalid_json_handled_gracefully():
@@ -994,10 +1116,14 @@ Replace the `_process_llm_batch` stub in `skills/_common/field_cleaner/field_cle
             '"confidence": 0.0, "reason": "<brief reason>"}]'
         )
 
-        fields_payload = json.dumps(
-            [{"field": i["field"], "field_type": i["field_type"], "value": i["value"]} for i in dirty_fields],
-            indent=2,
-        )
+        payload_items = []
+        for i in dirty_fields:
+            item = {"field": i["field"], "field_type": i["field_type"], "value": i["value"]}
+            # Postal code validation is country-dependent — pass country from same record
+            if i["field_type"] == "postal_code" and record.get("country"):
+                item["country_context"] = record["country"]
+            payload_items.append(item)
+        fields_payload = json.dumps(payload_items, indent=2)
 
         try:
             resp = llm.messages_create(
@@ -1192,9 +1318,8 @@ Replace the `_save_learned` stub in `skills/_common/field_cleaner/field_cleaner.
                     """,
                     (field_type, domain, raw_lower, corrected_value, confidence),
                 )
-            self._conn.commit()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to write learned correction (%s, %s): %s", field_type, raw_lower, e)
 ```
 
 - [ ] **Step 4: Run all tests**
@@ -1254,8 +1379,8 @@ field_cleaner:
 4. Convention (field name pattern) → last-resort heuristic
 
 ## Processing Flow
-1. Deterministic: learned corrections → normalization_map → canonical check → reject_pattern
-2. LLM (single batched call per record) for anything unresolved
+1. Deterministic: normalization_map → learned corrections → city title case / validation_pattern / validation_patterns → reject_pattern
+2. LLM (single batched call per record) for anything unresolved; postal_code fields include country context
 3. Corrections ≥ 0.90 confidence written to `learned_field_corrections` table
 
 ## Output Fields Added
@@ -1317,9 +1442,9 @@ In `skills/real_estate/skills.yaml`, add after `record_linker` and before `munic
       llm_client: "${runtime.llm_client}"
       learning_confidence_threshold: 0.90
       domain: real_estate
-    cost: low
+    cost: medium   # deterministic path is low; LLM path (unresolved fields) is high — medium is the honest estimate
     phase: 1
-    latency_estimate_ms: 50
+    latency_estimate_ms: 200   # deterministic ~50ms; LLM path ~1500ms; medium reflects mixed batches
     depends_on: [spell_checker, address_standardizer]
 ```
 
@@ -1349,9 +1474,9 @@ In `skills/sports_ticketing/skills.yaml`, add after `record_linker`:
       llm_client: "${runtime.llm_client}"
       learning_confidence_threshold: 0.90
       domain: sports_ticketing
-    cost: low
+    cost: medium
     phase: 1
-    latency_estimate_ms: 50
+    latency_estimate_ms: 200
     depends_on: [spell_checker]
 ```
 

@@ -33,6 +33,34 @@ def top_queries_for(conn, domain: str, gap_type: str, k: int = 3, schema: str = 
         return [row[0] for row in cur.fetchall()]
 
 
+def gap_detection_for(conn, domain: str, schema: str = None) -> dict:
+    """Return {column_name: gap_detection_dict} for a domain using a live conn.
+
+    Mirrors top_queries_for: postgres-first, best-effort. Returns {} on ANY DB
+    error (missing table, bad schema, etc.) — intentional: the classifier then
+    sees no config and emits no gaps, degrading gracefully rather than crashing.
+    """
+    if schema is None:
+        schema = get_framework_schema()
+    out = {}
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT column_name, gap_detection FROM {schema}.column_metadata "
+                f"WHERE domain = %s AND gap_detection IS NOT NULL",
+                (domain,),
+            )
+            for row in cur.fetchall():
+                column_name, cfg = row[0], row[1]
+                if isinstance(cfg, str):
+                    cfg = json.loads(cfg)
+                if cfg:
+                    out[column_name] = cfg
+    except Exception:
+        return {}  # best-effort: classifier falls back to empty config
+    return out
+
+
 def record_query_outcome(conn, domain: str, gap_type: str, query_template: str, success: bool, schema: str = None):
     """Increment success or failure counter for a query template."""
     if schema is None:

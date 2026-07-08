@@ -30,7 +30,6 @@ def _validate_fields(db_path: str, table: str, fields: Dict, *, protected_fields
 
 def insert_raw_data(
     db_path: str,
-    schema: str = None,
     name: str,
     age: Optional[int] = None,
     city: Optional[str] = None,
@@ -61,7 +60,7 @@ def insert_raw_data(
 
 def get_raw_data_by_id(
     db_path: str,
-    schema: str = None, raw_data_id: int) -> Optional[Dict]:
+    raw_data_id: int, schema: str = None) -> Optional[Dict]:
     conn = get_db_connection(db_path)
     try:
         cursor = conn.cursor()
@@ -87,7 +86,6 @@ def get_all_raw_data(
 
 def insert_cleaned_data(
     db_path: str,
-    schema: str = None,
     raw_data_id: int,
     name: Optional[str] = None,
     age: Optional[int] = None,
@@ -103,6 +101,7 @@ def insert_cleaned_data(
     normalized_municipality: Optional[str] = None,
     confidence_score: Optional[float] = None,
     normalization_status: Optional[str] = None,
+    schema: str = None,
 ) -> int:
     conn = get_db_connection(db_path)
     try:
@@ -191,7 +190,7 @@ def delete_raw_data(db_path: str, record_id: int) -> bool:
 
 def get_cleaned_data_for_raw(
     db_path: str,
-    schema: str = None, raw_data_id: int) -> List[Dict]:
+    raw_data_id: int, schema: str = None) -> List[Dict]:
     conn = get_db_connection(db_path)
     try:
         cursor = conn.cursor()
@@ -212,13 +211,13 @@ def query_records(
 
 def insert_flag(
     db_path: str,
-    schema: str = None,
     raw_data_id: int,
     flag_type: str,
     severity: str,
     reason: str,
     raised_by: str,
     cleaned_data_id: Optional[int] = None,
+    schema: str = None,
 ) -> int:
     conn = get_db_connection(db_path)
     try:
@@ -260,11 +259,11 @@ def update_flag_resolution(
 
 def query_flags(
     db_path: str,
-    schema: str = None,
     only_unresolved: bool = True,
     raw_data_id: Optional[int] = None,
     flag_type: Optional[str] = None,
     limit: int = 100,
+    schema: str = None,
 ) -> List[Dict]:
     where = []
     params: list = []

@@ -41,3 +41,7 @@ def get_table_columns(db_path: str, table_name: str, schema: str = "public"):
 
 def get_column_metadata(db_path: str, table_name: str):
     return _impl().get_column_metadata(db_path, table_name)
+
+
+def get_gap_detection(db_path: str, domain: str):
+    return _impl().get_gap_detection(db_path, domain)

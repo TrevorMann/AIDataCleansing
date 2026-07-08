@@ -80,3 +80,50 @@ def bulk_insert_ignore(
 
     conn.commit()
     return len(rows)
+
+
+def bulk_upsert(
+    conn,
+    table: str,
+    rows: list[dict],
+    conflict_cols: list[str],
+    update_cols: list[str],
+) -> int:
+    """
+    Insert rows; on conflict over conflict_cols, UPDATE update_cols from the
+    incoming row (ON CONFLICT ... DO UPDATE). Returns number of rows processed.
+
+    Use this instead of bulk_insert_ignore when existing rows must be refreshed
+    rather than skipped. The `excluded.` pseudo-table works on both Postgres and
+    SQLite; only the parameter placeholder (%s vs ?) differs by backend.
+
+    rows must be non-empty and all have identical keys.
+    """
+    if not rows:
+        return 0
+
+    cols = list(rows[0].keys())
+    backend = _backend(conn)
+    conflict = ", ".join(conflict_cols)
+    set_clause = ", ".join(f"{c} = excluded.{c}" for c in update_cols)
+    params = [tuple(r[c] for c in cols) for r in rows]
+
+    if backend == "postgres":
+        ph = ", ".join(["%s"] * len(cols))
+        sql = (
+            f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({ph})"
+            f" ON CONFLICT ({conflict}) DO UPDATE SET {set_clause}"
+        )
+        with conn.cursor() as cur:
+            cur.executemany(sql, params)
+    else:
+        ph = ", ".join(["?"] * len(cols))
+        sql = (
+            f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({ph})"
+            f" ON CONFLICT ({conflict}) DO UPDATE SET {set_clause}"
+        )
+        cur = conn.cursor()
+        cur.executemany(sql, params)
+
+    conn.commit()
+    return len(rows)

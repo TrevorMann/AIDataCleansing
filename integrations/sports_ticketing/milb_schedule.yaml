@@ -1,0 +1,19 @@
+domain: sports_ticketing
+source: milb_schedule
+# MiLB rides the open MLB StatsAPI — no credential required.
+base_url: https://statsapi.mlb.com
+auth:
+  type: none
+endpoints:
+  schedule:
+    path: /api/v1/schedule
+    method: GET
+    params:
+      # sportId: 11=Triple-A, 12=Double-A, 13=High-A, 14=Single-A
+      sportId: 11
+      # startDate / endDate (YYYY-MM-DD) filled at call time by the seeder (sub-project #3)
+  teams:
+    path: /api/v1/teams
+    method: GET
+    params:
+      sportId: 11

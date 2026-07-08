@@ -45,8 +45,8 @@ def _mock_conn(*fetchall_results):
 def test_list_gaps_returns_unannotated_columns():
     svc = MetadataAnnotationService(llm_client=None)
     conn, _ = _mock_conn(
-        [("raw_data", "postal_code")],          # existing annotations
-        [("id",), ("postal_code",), ("city",)],  # raw_data columns
+        [{"table_name": "raw_data", "column_name": "postal_code"}],   # existing annotations
+        [{"column_name": "id"}, {"column_name": "postal_code"}, {"column_name": "city"}],  # raw_data columns
         [],                                      # cleaned_data columns
     )
     gaps = svc.list_gaps("real_estate", conn, tables=["raw_data", "cleaned_data"])
@@ -58,8 +58,8 @@ def test_list_gaps_returns_unannotated_columns():
 def test_list_gaps_empty_when_all_annotated():
     svc = MetadataAnnotationService(llm_client=None)
     conn, _ = _mock_conn(
-        [("raw_data", "city")],   # existing
-        [("city",)],              # raw_data columns
+        [{"table_name": "raw_data", "column_name": "city"}],   # existing
+        [{"column_name": "city"}],              # raw_data columns
     )
     assert svc.list_gaps("real_estate", conn, tables=["raw_data"]) == []
 
@@ -74,7 +74,7 @@ def test_run_annotates_gaps_and_returns_report():
     svc = MetadataAnnotationService(llm_client=llm)
     conn, cur = _mock_conn(
         [],            # no existing annotations
-        [("city",)],   # raw_data columns
+        [{"column_name": "city"}],   # raw_data columns
         [],            # sample values for city
     )
     with patch("services.metadata_annotation.SeederRegistry") as mock_sr:
@@ -91,8 +91,8 @@ def test_run_skips_existing_when_not_forced():
     llm = MagicMock()
     svc = MetadataAnnotationService(llm_client=llm)
     conn, _ = _mock_conn(
-        [("raw_data", "city")],   # already annotated
-        [("city",)],
+        [{"table_name": "raw_data", "column_name": "city"}],   # already annotated
+        [{"column_name": "city"}],
     )
     with patch("services.metadata_annotation.SeederRegistry") as mock_sr:
         mock_sr.return_value.manifest = {"description": "Test domain"}
@@ -111,7 +111,7 @@ def test_run_flags_low_confidence():
     svc = MetadataAnnotationService(llm_client=llm)
     conn, _ = _mock_conn(
         [],
-        [("ref_1",)],
+        [{"column_name": "ref_1"}],
         [],  # samples
     )
     with patch("services.metadata_annotation.SeederRegistry") as mock_sr:
@@ -129,7 +129,7 @@ def test_run_handles_malformed_llm_response():
         MagicMock(text="not json at all")
     ]
     svc = MetadataAnnotationService(llm_client=llm)
-    conn, _ = _mock_conn([], [("city",)], [])
+    conn, _ = _mock_conn([], [{"column_name": "city"}], [])
     with patch("services.metadata_annotation.SeederRegistry") as mock_sr:
         mock_sr.return_value.manifest = {"description": "Test domain"}
         report = svc.run("test_domain", conn, tables=["raw_data"])
@@ -208,7 +208,7 @@ def test_orchestration_team_warns_on_annotation_gaps(caplog):
     cur = mock_conn.cursor.return_value.__enter__.return_value
     cur.fetchall.side_effect = [
         [],           # _get_existing_annotations: no annotations
-        [("city",)],  # _get_table_columns raw_data
+        [{"column_name": "city"}],  # _get_table_columns raw_data
         [],           # _get_table_columns cleaned_data
     ]
     registry.runtime = {"pg_conn": mock_conn}
@@ -231,9 +231,9 @@ def test_orchestration_team_no_warning_when_annotated(caplog):
     mock_conn = MagicMock()
     cur = mock_conn.cursor.return_value.__enter__.return_value
     cur.fetchall.side_effect = [
-        [("raw_data", "city"), ("cleaned_data", "city")],  # existing
-        [("city",)],                                        # raw_data cols
-        [("city",)],                                        # cleaned_data cols
+        [{"table_name": "raw_data", "column_name": "city"}, {"table_name": "cleaned_data", "column_name": "city"}],  # existing
+        [{"column_name": "city"}],                          # raw_data cols
+        [{"column_name": "city"}],                          # cleaned_data cols
     ]
     registry.runtime = {"pg_conn": mock_conn}
 

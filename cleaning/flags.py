@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
+from cleaning.gap_types import parse_gap
 from db.helpers import insert_flag, query_flags
 
 
@@ -20,6 +21,31 @@ class FlagType(str, Enum):
     LOW_CONFIDENCE_RESEARCH    = "low_confidence_research"
     GUARDRAIL_BLOCKED          = "guardrail_blocked"
     RESOLVED_AFTER_ESCALATION  = "resolved_after_escalation"
+
+
+# Data-defect gaps -> output FlagType. Keyed on (verb, first_field).
+# Process flags (guardrail_blocked, etc.) are never derived from gaps.
+_GAP_TO_FLAG = {
+    ("missing", "country"):      FlagType.UNKNOWN_COUNTRY,
+    ("missing", "postal_code"):  FlagType.POSTAL_UNRESOLVED,
+    ("missing", "municipality"): FlagType.MUNICIPALITY_UNRESOLVED,
+    ("ambiguous", "postal_code"): FlagType.POSTAL_AMBIGUOUS,
+}
+
+
+def flags_from_gaps(gap_types: list) -> list:
+    """Derive output FlagTypes from gap-type strings (spec §6).
+
+    Unmapped gaps yield nothing. Result is de-duplicated, order-preserving.
+    """
+    flags = []
+    for gap in gap_types:
+        parsed = parse_gap(gap)
+        first_field = parsed.fields[0] if parsed.fields else None
+        flag = _GAP_TO_FLAG.get((parsed.verb, first_field))
+        if flag is not None and flag not in flags:
+            flags.append(flag)
+    return flags
 
 
 class FlagSeverity(str, Enum):

@@ -26,31 +26,28 @@ class ColumnMetadataSeeder(Seeder):
             return yaml.safe_load(f)
 
     def parse(self, payload: Any) -> list:
+        import json
         domain = payload.get("domain", self.domain)
         rows = []
         for table_name, cols in payload.get("tables", {}).items():
             for entry in cols:
+                gd = entry.get("gap_detection")
                 rows.append({
-                    "domain":      domain,
-                    "table_name":  table_name,
-                    "column_name": entry["column"],
-                    "description": entry.get("description", "").strip(),
+                    "domain":        domain,
+                    "table_name":    table_name,
+                    "column_name":   entry["column"],
+                    "description":   entry.get("description", "").strip(),
+                    "gap_detection": json.dumps(gd) if gd else None,
                 })
         return rows
 
     def upsert(self, conn, rows: list) -> int:
-        cursor = conn.cursor()
-        count = 0
-        for row in rows:
-            cursor.execute(
-                """
-                INSERT INTO column_metadata (domain, table_name, column_name, description)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT (domain, table_name, column_name)
-                DO UPDATE SET description = excluded.description
-                """,
-                (row["domain"], row["table_name"], row["column_name"], row["description"]),
-            )
-            count += 1
-        conn.commit()
-        return count
+        from db.upsert import bulk_upsert
+
+        return bulk_upsert(
+            conn,
+            "column_metadata",
+            rows,
+            conflict_cols=["domain", "table_name", "column_name"],
+            update_cols=["description", "gap_detection"],
+        )

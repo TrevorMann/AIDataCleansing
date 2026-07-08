@@ -82,6 +82,29 @@ def get_column_metadata(db_path: str, table_name: str) -> Dict[str, str]:
         conn.close()
 
 
+def get_gap_detection(db_path: str, domain: str) -> dict:
+    """Return {column_name: gap_detection_dict} for a domain, across its tables."""
+    import json
+    conn = get_db_connection(db_path)
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT column_name, gap_detection FROM column_metadata "
+            "WHERE domain = ? AND gap_detection IS NOT NULL",
+            (domain,),
+        )
+        out = {}
+        for row in cursor.fetchall():
+            raw = row["gap_detection"]
+            if raw:
+                out[row["column_name"]] = json.loads(raw)
+        return out
+    except Exception:
+        return {}  # best-effort: classifier falls back to empty config on any DB error
+    finally:
+        conn.close()
+
+
 def get_column_profiles(db_path: str, table_name: str) -> Dict[str, Dict]:
     conn = get_db_connection(db_path)
     try:

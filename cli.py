@@ -319,7 +319,7 @@ def _llm_loop(messages: list, system: str | list, tools: list) -> str:
 
 # ── CLEAN flow ────────────────────────────────────────────────────────────────
 
-def _handle_clean(query: str) -> None:
+def _handle_clean(query: str) -> str | None:
     from cleaning.orchestrator_v2 import OrchestrationTeam, run_cleaning_workflow_v2
     from skills.registry import SkillRegistry
 
@@ -358,7 +358,7 @@ def _handle_clean(query: str) -> None:
 
     if not fetched_records:
         print("  No records found — nothing to clean.")
-        return
+        return "I ran the cleaning pipeline but found no records matching your query."
 
     # Step 2: Run pipeline
     print(f"\nRunning pipeline on {len(fetched_records)} record(s) [domain={_ACTIVE_DOMAIN}]...")
@@ -372,6 +372,13 @@ def _handle_clean(query: str) -> None:
     if report.errors:
         print(f"\nErrors: {report.errors}")
     print(f"{'='*60}\n")
+
+    error_note = f" {len(report.errors)} error(s) occurred." if report.errors else ""
+    return (
+        f"I ran the cleaning pipeline on {len(fetched_records)} record(s) "
+        f"(query: '{query}', domain: {_ACTIVE_DOMAIN}). "
+        f"{report.summary_text}.{error_note}"
+    )
 
 
 # ── main loop ─────────────────────────────────────────────────────────────────
@@ -406,7 +413,10 @@ def run() -> None:
 
         if upper.startswith("CLEAN"):
             query = user_input[5:].strip() or "all uncleaned records"
-            _handle_clean(query)
+            summary = _handle_clean(query)
+            if summary:
+                messages.append({"role": "user", "content": user_input})
+                messages.append({"role": "assistant", "content": summary})
             continue
 
         # Free-form Q&A

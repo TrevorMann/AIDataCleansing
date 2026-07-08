@@ -105,14 +105,37 @@ class WebSearchEnricher(BaseSkill):
             record.setdefault("_decisions", []).extend(decisions)
         return record
 
+    def _gap_config(self) -> dict:
+        """Load + cache the domain's gap_detection config (column -> cfg).
+
+        Uses the live self.conn (pg_conn), mirroring how _get_queries reads
+        pattern memory. Best-effort: returns {} when no conn / on any error.
+        Postgres-primary by design: on a SQLite backend pg_conn is never
+        injected, so config is {} and classify_gaps emits no gaps — the legacy
+        hint strings in _identify_gaps still fire. Not a bug to "fix".
+        """
+        cached = getattr(self, "_gap_config_cache", None)
+        if cached is not None:
+            return cached
+        config = {}
+        if self.conn:
+            try:
+                from db.pg_query_memory import gap_detection_for
+                config = gap_detection_for(self.conn, self.domain) or {}
+            except Exception:
+                config = {}
+        self._gap_config_cache = config
+        return config
+
     def _identify_gaps(self, record: dict) -> List[str]:
-        gaps = []
+        from cleaning.gap_classifier import classify_gaps
+        gaps = classify_gaps(record, self._gap_config())
+        # Legacy downstream signals map to deferred verbs (ambiguous/unresolved);
+        # keep them as hint strings in v1 so query_pattern_memory lookups still hit.
         if record.get("_unknown_fsa"):
             gaps.append("postal_unresolved")
         if record.get("_municipality_confidence", 1.0) < 0.70:
             gaps.append("municipality_ambiguous")
-        if not record.get("country"):
-            gaps.append("unknown_country")
         gaps.extend(record.get("_gap_hints", []))
         return list(dict.fromkeys(gaps))  # dedupe, preserve order
 
