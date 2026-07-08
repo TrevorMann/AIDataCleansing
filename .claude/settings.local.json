@@ -55,7 +55,17 @@
       "Skill(superpowers:systematic-debugging)",
       "Bash(xargs basename -a)",
       "Bash(./.venv-win/Scripts/python.exe -m pytest tests/ -q -p no:cacheprovider)",
-      "Bash(./.venv-win/Scripts/python.exe -m pytest tests/cleaning/test_cache.py -q -p no:cacheprovider)"
+      "Bash(./.venv-win/Scripts/python.exe -m pytest tests/cleaning/test_cache.py -q -p no:cacheprovider)",
+      "Bash(cat)",
+      "Read(//tmp/**)",
+      "Bash(grep -v \"^$\")",
+      "Read(//home/hello/.claude/jobs/37cc2025/tmp/**)",
+      "Bash(rm -rf demo)",
+      "Bash(PYTHONPATH=/mnt/f/AI_learning_project /mnt/f/AI_learning_project/venv/bin/python -)",
+      "Bash(/mnt/f/AI_learning_project/.venv-win/Scripts/python -m pytest tests/ -v --tb=short)",
+      "Bash(xargs ls -la)",
+      "WebSearch",
+      "WebFetch(domain:ssahuupgrad-93226.medium.com)"
     ]
   }
 }
