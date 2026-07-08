@@ -202,6 +202,23 @@ class OrchestrationTeam:
             record, entries = self._run_skill(self.triage_skill, record)
             audit_log.extend(entries)
 
+        # Phase 6: Deep-tier escalation — only for records STILL needs_review
+        deep = self.registry.get("deep_escalation")
+        if deep and record.get("_triage_route") == "needs_review":
+            if self.batch_budget and not self.batch_budget.take():
+                audit_log.append({
+                    "skill": "OrchestrationTeam",
+                    "decision": "Skipped deep_escalation — budget exhausted",
+                    "reason": self.batch_budget.summary(),
+                    "confidence": 0.0,
+                })
+            else:
+                record, entries = self._run_skill(deep, record)
+                audit_log.extend(entries)
+                if self.triage_skill:
+                    record, entries = self._run_skill(self.triage_skill, record)
+                    audit_log.extend(entries)
+
         return record, audit_log
 
     def process_batch(self, records: List[Dict[str, Any]]) -> Tuple[List[Dict], List]:
