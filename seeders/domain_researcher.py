@@ -11,6 +11,7 @@ This module contains all testable logic.
 
 import csv
 import json
+import logging
 import re
 import textwrap
 from dataclasses import dataclass, field
@@ -18,6 +19,20 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import yaml
+
+logger = logging.getLogger(__name__)
+
+
+def _log_usage(model: str, usage: Any) -> None:
+    """Log token usage for cost tracking (every messages.create call)."""
+    if usage is None:
+        return
+    logger.info(
+        "[%s] input=%s output=%s",
+        model,
+        getattr(usage, "input_tokens", "?"),
+        getattr(usage, "output_tokens", "?"),
+    )
 
 
 # ── data structures ───────────────────────────────────────────────────────────────
@@ -150,6 +165,46 @@ _TIMESTAMP_TYPES = frozenset({
 _TEAM_WORDS = frozenset({"team", "player", "athlete", "club"})
 _POSTAL_WORDS = frozenset({"postal", "zip", "postcode", "zipcode"})
 
+# ── web grounding ─────────────────────────────────────────────────────────────────
+
+def gather_web_context(
+    domain: str,
+    answers: Dict[str, str],
+    web_cache: Any,
+    max_queries: int = 5,
+    max_chars: int = 6000,
+) -> str:
+    """Run a few live web searches to ground seed research in current facts.
+
+    Builds queries from the user's answers (entity description, gap types) and
+    returns a snippets block for the research prompt. Best-effort: any failure
+    returns what was gathered so far.
+    """
+    entity = answers.get("entity_description", "") or domain
+    queries = [f"{entity} common misspellings abbreviations aliases"]
+    for gap in (answers.get("gap_types") or "").split(",")[: max_queries - 1]:
+        gap = gap.strip()
+        if gap:
+            queries.append(f"{gap} {entity}")
+
+    sections = []
+    for query in queries[:max_queries]:
+        try:
+            result = web_cache.get_or_search(query)
+        except Exception as e:
+            logger.warning("Web grounding search failed for %r: %s", query, e)
+            continue
+        if isinstance(result, dict):
+            snippets = [r.get("content", "") for r in result.get("results", [])[:3]]
+            text = " ".join(s for s in snippets if s)
+        else:
+            text = str(result or "")
+        if text:
+            sections.append(f"[search: {query}]\n{text[:1500]}")
+
+    return "\n\n".join(sections)[:max_chars]
+
+
 # ── core researcher ───────────────────────────────────────────────────────────────
 
 class DomainResearcher:
@@ -273,6 +328,7 @@ class DomainResearcher:
             max_tokens=4096,
             messages=[{"role": "user", "content": prompt}],
         )
+        _log_usage(model, getattr(response, "usage", None))
         text_block = next(
             (block for block in response.content if hasattr(block, "text")),
             None,
@@ -456,22 +512,141 @@ class DomainResearcher:
             - data_type must be exactly one of: text, date, phone, email, numeric, code
         """).strip()
 
+    # One LLM call per artifact so a large schema can't truncate the whole
+    # bundle mid-JSON. Each spec: (json_key, task instructions).
+    _ARTIFACT_SPECS = {
+        "spell_corrections": textwrap.dedent("""
+            {
+              "spell_corrections": [
+                {"wrong": "misspelled", "right": "correct", "confidence": 0.95},
+                ...  // 15-25 evidence-based corrections for text columns that have data samples above
+                     // SKIP columns with [no data yet] — do not guess
+              ]
+            }
+            Rules:
+            - only for columns that have data samples shown above
+            - confidence values must be 0.0-1.0
+        """).strip(),
+        "query_packs": textwrap.dedent("""
+            {
+              "query_packs": [
+                {
+                  "gap_type": "gap_type_key",
+                  "seed_queries": ["query template using {field_name} placeholders matching schema above", ...]
+                },
+                ...
+              ]
+            }
+            Rules:
+            - gap_type keys must be valid Python identifiers (lowercase, underscores)
+            - {field_name} placeholders in seed_queries must match column names from schema
+        """).strip(),
+        "column_descriptions": textwrap.dedent("""
+            {
+              "column_descriptions": [
+                {
+                  "column_name": "exact_column_name_from_schema",
+                  "description": "what this field contains",
+                  "example_values": ["example1", "example2"],
+                  "data_type": "text|date|phone|email|numeric|code"
+                },
+                ...
+              ]
+            }
+            Rules:
+            - column names must exactly match names in the schema above
+            - data_type must be exactly one of: text, date, phone, email, numeric, code
+        """).strip(),
+    }
+
+    def _schema_context(
+        self,
+        schema: Dict[str, List[Dict]],
+        annotations: Dict[str, str],
+        data_samples: Dict[str, List],
+        answers: Dict[str, str],
+        web_context: str = "",
+    ) -> str:
+        schema_lines = []
+        for table, cols in schema.items():
+            schema_lines.append(f"\nTable: {table}")
+            for col in cols:
+                ann = annotations.get(f"{table}.{col['name']}", "")
+                ann_note = f"  — {ann}" if ann else ""
+                samples = data_samples.get(f"{table}.{col['name']}", [])
+                sample_note = (
+                    f"  [samples: {', '.join(str(s) for s in samples[:5])}]"
+                    if samples else "  [no data yet]"
+                )
+                schema_lines.append(f"  {col['name']} ({col['type']}){ann_note}{sample_note}")
+        schema_block = "\n".join(schema_lines)
+        answers_text = "\n".join(f"  {k}: {v}" for k, v in answers.items() if v)
+
+        parts = [
+            f"You are a data quality expert helping initialize a new data cleaning domain.\n\nDomain: {self.domain}",
+            f"=== ACTUAL DATABASE SCHEMA (use these exact column names) ===\n{schema_block}",
+            f"=== USER CONTEXT ===\n{answers_text}",
+        ]
+        if web_context:
+            parts.append(
+                "=== WEB RESEARCH (ground-truth snippets from live search — "
+                f"prefer these over memory) ===\n{web_context}"
+            )
+        return "\n\n".join(parts)
+
     def research_with_schema(
         self,
         answers: Dict[str, str],
         schema: Dict[str, List[Dict]],
         annotations: Dict[str, str],
         data_samples: Dict[str, List],
-        llm_client: Any,
-        model: str,
+        llm_client: Any = None,
+        model: str = "",
+        llm: Any = None,
+        web_context: str = "",
     ) -> ResearchBundle:
-        """Research with schema context — grounded in actual columns and data samples."""
-        prompt = self.build_schema_prompt(schema, annotations, data_samples, answers)
-        response = llm_client.messages.create(
-            model=model,
-            max_tokens=4096,
-            messages=[{"role": "user", "content": prompt}],
-        )
+        """Research with schema context — one LLM call per artifact.
+
+        Pass either a tiered `llm` (cleaning.llm_client.LLMClient — preferred;
+        retries + usage logging built in) or a raw SDK `llm_client` + `model`.
+        `web_context` is an optional block of live search snippets that grounds
+        the LLM's domain knowledge (see gather_web_context).
+        """
+        context = self._schema_context(schema, annotations, data_samples, answers, web_context)
+        bundle = ResearchBundle(domain=self.domain)
+
+        for key, spec in self._ARTIFACT_SPECS.items():
+            prompt = (
+                f"{context}\n\n"
+                f"Generate the `{key}` seed content for this domain.\n"
+                f"Respond with a single JSON object (no markdown, no explanation outside JSON) "
+                f"shaped exactly like:\n{spec}"
+            )
+            text = self._call_llm(prompt, llm=llm, llm_client=llm_client, model=model)
+            partial = self.parse_llm_response(text)
+            bundle.spell_corrections.extend(partial.spell_corrections)
+            bundle.query_packs.extend(partial.query_packs)
+            bundle.column_descriptions.extend(partial.column_descriptions)
+
+        return bundle
+
+    def _call_llm(self, prompt: str, llm: Any = None, llm_client: Any = None,
+                  model: str = "") -> str:
+        """Single call surface for both client styles. Returns response text."""
+        if llm is not None:
+            response = llm.messages_create(
+                system="You are a data quality expert. Output JSON only.",
+                messages=[{"role": "user", "content": prompt}],
+                tools=[],
+                max_tokens=4096,
+            )
+        else:
+            response = llm_client.messages.create(
+                model=model,
+                max_tokens=4096,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            _log_usage(model, getattr(response, "usage", None))
         text_block = next(
             (block for block in response.content if hasattr(block, "text")), None
         )
@@ -480,4 +655,4 @@ class DomainResearcher:
                 f"No text block in LLM response. "
                 f"Block types: {[type(b).__name__ for b in response.content]}"
             )
-        return self.parse_llm_response(text_block.text)
+        return text_block.text

@@ -10,6 +10,7 @@ Usage:
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
 from typing import Optional
@@ -17,7 +18,6 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from services.domain_initializer import DomainInitializer, SYSTEM_TABLES
-from llm_client_factory import create_client
 from seeders.domain_researcher import DomainResearcher
 from seeders.registry import SeederRegistry
 from pathlib import Path as _Path
@@ -252,18 +252,23 @@ def phase2_annotation(domain: str, tables: list[str], conn, schema: str = "publi
     llm = _build_llm_client()
     svc = MetadataAnnotationService(llm_client=llm)
 
-    # Wrap _annotate_column to print per-column progress
-    original_annotate = svc._annotate_column
+    # Wrap _annotate_table to print per-table progress
+    original_annotate = svc._annotate_table
 
-    def _annotating_with_progress(d, dd, table, column, conn_inner, db_schema="public"):
-        print(f"  {table}.{column:<30} ... ", end="", flush=True)
-        result = original_annotate(d, dd, table, column, conn_inner, db_schema)
-        conf = result.get("confidence", 0)
-        marker = "⚠ low confidence" if conf < 0.70 else "done"
-        print(f"{marker} (confidence={conf:.2f})")
+    def _annotating_with_progress(d, dd, table, columns, conn_inner, db_schema="public"):
+        print(f"  {table} ({len(columns)} columns) ... ", end="", flush=True)
+        result = original_annotate(d, dd, table, columns, conn_inner, db_schema)
+        if result is None:
+            print("⚠ LLM call failed — skipped (re-run to retry)")
+        else:
+            low = sum(
+                1 for c in columns
+                if result["columns"].get(c, {}).get("confidence", 0.3) < 0.70
+            )
+            print("done" + (f" ({low} low-confidence)" if low else ""))
         return result
 
-    svc._annotate_column = _annotating_with_progress
+    svc._annotate_table = _annotating_with_progress
 
     report = svc.run(domain, conn, tables=tables, schema=schema, force=force)
 
@@ -313,10 +318,23 @@ def phase3_seed_research(domain: str, schema: dict, conn) -> None:
             print(f"  hint: {q.hint}")
         answers[q.key] = input(f"{q.prompt}\n> ").strip()
 
+    # Live web grounding — prefer current facts over model memory when a
+    # Tavily key is available. Best-effort; skipped silently without a key.
+    web_context = ""
+    if os.getenv("TAVILY_API_KEY"):
+        print("\nGathering web research to ground the seed content...")
+        try:
+            from cleaning.cache import WebSearchCache
+            from seeders.domain_researcher import gather_web_context
+            web_context = gather_web_context(domain, answers, WebSearchCache())
+            print(f"  {len(web_context)} chars of search snippets gathered")
+        except Exception as e:
+            print(f"  ⚠ web grounding skipped: {e}")
+
     print("\nConnecting to LLM to generate seed content...")
     try:
-        client, _backend, model = create_client()
-    except EnvironmentError as e:
+        llm = _build_llm_client(tier="standard")
+    except ValueError as e:
         print(f"\nERROR: {e}")
         sys.exit(1)
 
@@ -325,8 +343,8 @@ def phase3_seed_research(domain: str, schema: dict, conn) -> None:
         schema=schema,
         annotations=annotations,
         data_samples=samples,
-        llm_client=client,
-        model=model,
+        llm=llm,
+        web_context=web_context,
     )
 
     print("\n" + "─" * 50)
@@ -493,9 +511,9 @@ def cmd_refresh_seeds(domain: str, initializer: DomainInitializer, conn) -> None
 
 # ── main ──────────────────────────────────────────────────────────────────────
 
-def _build_llm_client():
-    from cleaning.llm_client import build_clients
-    return build_clients().fast
+def _build_llm_client(tier: str = "fast"):
+    from cleaning.llm_client import build_client_for_tier
+    return build_client_for_tier(tier)
 
 
 def main() -> None:

@@ -444,7 +444,8 @@ class TestResearchWithSchema:
             model="claude-test",
         )
         assert isinstance(bundle, ResearchBundle)
-        mock_client.messages.create.assert_called_once()
+        # one call per artifact: spell_corrections, query_packs, column_descriptions
+        assert mock_client.messages.create.call_count == 3
 
     def test_schema_context_appears_in_llm_prompt(self):
         r = DomainResearcher(domain="sports_ticketing")
@@ -462,3 +463,58 @@ class TestResearchWithSchema:
         messages = call_args[1].get("messages") or call_args[0][1]
         content = str(messages)
         assert "home_team" in content or "events" in content
+
+
+# ── web grounding + tiered client (audit findings 1.1/1.2/1.4) ────────────────────
+
+from seeders.domain_researcher import gather_web_context
+
+
+class TestWebGroundedResearch:
+    def test_gather_web_context_builds_snippet_block(self):
+        cache = MagicMock()
+        cache.get_or_search.return_value = {
+            "results": [{"content": "Scotiabank Arena is home of the Maple Leafs"}]
+        }
+        ctx = gather_web_context(
+            "sports_ticketing",
+            {"entity_description": "hockey tickets", "gap_types": "unknown_venue"},
+            cache,
+        )
+        assert "Scotiabank Arena" in ctx
+        assert cache.get_or_search.call_count == 2  # misspellings + 1 gap query
+
+    def test_gather_web_context_survives_search_failure(self):
+        cache = MagicMock()
+        cache.get_or_search.side_effect = RuntimeError("tavily down")
+        ctx = gather_web_context("d", {"entity_description": "x"}, cache)
+        assert ctx == ""
+
+    def test_web_context_appears_in_research_prompt(self):
+        r = DomainResearcher(domain="sports_ticketing")
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text=_VALID_LLM_RESPONSE)]
+        mock_client.messages.create.return_value = mock_response
+
+        r.research_with_schema(
+            answers={}, schema=_SCHEMA, annotations={}, data_samples={},
+            llm_client=mock_client, model="test",
+            web_context="[search: venues]\nScotiabank Arena facts",
+        )
+        content = str(mock_client.messages.create.call_args_list[0])
+        assert "Scotiabank Arena" in content
+
+    def test_tiered_llm_client_path(self):
+        """Passing a tiered LLMClient uses messages_create (retry+usage built in)."""
+        r = DomainResearcher(domain="sports_ticketing")
+        llm = MagicMock()
+        resp = MagicMock()
+        resp.content = [MagicMock(text=_VALID_LLM_RESPONSE)]
+        llm.messages_create.return_value = resp
+
+        bundle = r.research_with_schema(
+            answers={}, schema=_SCHEMA, annotations={}, data_samples={}, llm=llm,
+        )
+        assert isinstance(bundle, ResearchBundle)
+        assert llm.messages_create.call_count == 3

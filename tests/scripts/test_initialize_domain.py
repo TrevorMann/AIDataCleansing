@@ -285,8 +285,8 @@ class TestPhase3:
                 spell_corrections=[], query_packs=[], column_descriptions=[]
             )
             mock_dr.return_value.write_seeds.return_value = []
-            with patch("scripts.initialize_domain.create_client",
-                       return_value=(MagicMock(), "anthropic", "claude-test")):
+            with patch("scripts.initialize_domain._build_llm_client",
+                       return_value=MagicMock()):
                 phase3_seed_research("sports_ticketing", schema, conn)
 
         out = capsys.readouterr().out
@@ -302,8 +302,8 @@ class TestPhase3:
         with patch("scripts.initialize_domain._sample_text_columns", return_value=samples), \
              patch("scripts.initialize_domain._load_annotations", return_value={}), \
              patch("scripts.initialize_domain.DomainResearcher") as mock_dr, \
-             patch("scripts.initialize_domain.create_client",
-                   return_value=(MagicMock(), "anthropic", "claude-test")), \
+             patch("scripts.initialize_domain._build_llm_client",
+                   return_value=MagicMock()), \
              patch("scripts.initialize_domain.SeederRegistry"), \
              patch("builtins.input", side_effect=["", "", "", "", "", "", "", "y"]):
             mock_bundle = MagicMock()

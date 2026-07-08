@@ -131,6 +131,12 @@ class OrchestrationTeam:
                             merged[k] = v
             record = merged
 
+        # Snapshot after the deterministic phase — corrections learning
+        # compares against this so phase-1 output is never re-learned.
+        learn_fields = self._learnable_text_fields()
+        if learn_fields:
+            record["_post_deterministic"] = {f: record.get(f) for f in learn_fields}
+
         # Phase 2: Initial triage
         if self.triage_skill:
             record, entries = self._run_skill(self.triage_skill, record)
@@ -202,7 +208,54 @@ class OrchestrationTeam:
             record, entries = self._run_skill(self.triage_skill, record)
             audit_log.extend(entries)
 
+        # Phase 6: Deep-tier escalation — only for records STILL needs_review
+        deep = self.registry.get("deep_escalation")
+        if deep and record.get("_triage_route") == "needs_review":
+            if self.batch_budget and not self.batch_budget.take():
+                audit_log.append({
+                    "skill": "OrchestrationTeam",
+                    "decision": "Skipped deep_escalation — budget exhausted",
+                    "reason": self.batch_budget.summary(),
+                    "confidence": 0.0,
+                })
+            else:
+                record, entries = self._run_skill(deep, record)
+                audit_log.extend(entries)
+                if self.triage_skill:
+                    record, entries = self._run_skill(self.triage_skill, record)
+                    audit_log.extend(entries)
+
         return record, audit_log
+
+    def _learnable_text_fields(self) -> List[str]:
+        """Text fields eligible for corrections learning (spell checker config)."""
+        spell = self.registry.get("spell_checker")
+        return list(getattr(spell, "text_fields", []) or [])
+
+    def _learn_corrections(self, processed: List[Dict], all_audit: List) -> None:
+        """Propose spell_corrections rows from post-deterministic changes."""
+        conn = self.registry.runtime.get("pg_conn") if hasattr(self.registry, "runtime") else None
+        domain = getattr(self.registry, "domain", None)
+        fields = self._learnable_text_fields()
+
+        proposals = []
+        for record in processed:
+            snapshot = record.pop("_post_deterministic", None)
+            if snapshot and conn and domain and not record.get("_error"):
+                from cleaning.corrections_learner import propose_corrections
+                proposals.extend(propose_corrections(snapshot, record, fields))
+
+        if not (proposals and conn and domain):
+            return
+        from cleaning.corrections_learner import record_learned_corrections
+        written = record_learned_corrections(conn, domain, proposals)
+        if written:
+            all_audit.append({
+                "skill": "OrchestrationTeam",
+                "decision": f"Learned {written} new spell correction(s)",
+                "reason": f"post-deterministic changes: {[p['wrong'] for p in proposals]}",
+                "confidence": 0.75,
+            })
 
     def process_batch(self, records: List[Dict[str, Any]]) -> Tuple[List[Dict], List]:
         """Process a batch. Runs record_linker.link_batch() after per-record pass."""
@@ -210,7 +263,19 @@ class OrchestrationTeam:
         processed = []
 
         for record in records:
-            cleaned, audit = self.process_record(record)
+            try:
+                cleaned, audit = self.process_record(record)
+            except Exception as e:
+                # One bad record must not lose the rest of the batch.
+                logger.error("process_record failed for id=%s: %s", record.get("id"), e)
+                cleaned = dict(record)
+                cleaned["_error"] = str(e)
+                audit = [{
+                    "skill": "OrchestrationTeam",
+                    "decision": f"Record {record.get('id')} failed",
+                    "reason": str(e),
+                    "confidence": 0.0,
+                }]
             processed.append(cleaned)
             all_audit.extend(audit)
 
@@ -220,6 +285,9 @@ class OrchestrationTeam:
             # link_batch assigns _group_id to each record but generates no audit entries —
             # the linkage outcome is readable from record["_group_id"].
             processed = record_linker.link_batch(processed)
+
+        # Self-learning: feed enrichment-made fixes back to spell_corrections
+        self._learn_corrections(processed, all_audit)
 
         return processed, all_audit
 
@@ -254,8 +322,19 @@ def run_cleaning_workflow_v2(
             for i, r in enumerate(processed_records):
                 print(f"  [{i+1}/{len(records)}] id={r.get('id')} route={r.get('_triage_route')}")
 
+        routes: Dict[str, int] = {}
+        errors = []
+        for r in processed_records:
+            route = r.get("_triage_route")
+            if route:
+                routes[route] = routes.get(route, 0) + 1
+            if r.get("_error"):
+                errors.append({"id": r.get("id"), "error": r["_error"]})
+        flagged_count = sum(n for route, n in routes.items() if route != "done")
+
         summary_text = (
             f"Cleaned {len(processed_records)}/{len(records)} records. "
+            f"Routes: {routes or 'n/a'}. {len(errors)} errors. "
             f"{len(audit_log)} audit entries. "
             f"Total: {sum(timing.values()):.2f}s."
         )
@@ -263,12 +342,12 @@ def run_cleaning_workflow_v2(
         return CleaningRunReport(
             records_processed=len(records),
             cleaned_count=len(processed_records),
-            flagged_count=0,
-            flags_by_type={},
+            flagged_count=flagged_count,
+            flags_by_type=routes,
             cache_stats={"hits": 0, "misses": 0, "pg_hits": 0, "queries_cached": 0},
             timing=timing,
             flag_summary=[],
-            errors=[],
+            errors=errors,
             summary_text=summary_text,
             audit_log=audit_log,
         )
