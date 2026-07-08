@@ -10,7 +10,7 @@ from typing import Any, Optional
 
 from psycopg import sql
 
-from prompts.annotation import build_annotation_prompt
+from prompts.annotation import build_annotation_prompt, build_table_annotation_prompt
 from seeders.registry import SeederRegistry
 
 logger = logging.getLogger(__name__)
@@ -28,6 +28,8 @@ class AnnotationReport:
 class MetadataAnnotationService:
     LOW_CONFIDENCE_THRESHOLD = 0.70
     ANNOTATION_SYSTEM = "You are a database column annotator. Output JSON only."
+    DESCRIPTION_MAX_CHARS = 300
+    TABLE_ROW = "__table__"  # column_name used to store the table-level description
 
     def __init__(self, llm_client: Optional[Any] = None):
         self._llm = llm_client
@@ -90,29 +92,48 @@ class MetadataAnnotationService:
         report = AnnotationReport(domain=domain)
 
         for table in tables:
+            todo = []
             for column in self._get_table_columns(table, conn, schema):
                 if (table, column) in existing and not force:
                     report.skipped += 1
                     continue
+                todo.append(column)
+            if not todo:
+                continue
 
-                result = self._annotate_column(
-                    domain, domain_description, table, column, conn, schema
+            # One LLM call per table — sibling columns give the model context
+            # a lone column name can't.
+            result = self._annotate_table(
+                domain, domain_description, table, todo, conn, schema
+            )
+            if result is None:
+                # LLM call failed — do not persist junk rows that would
+                # block re-annotation; record them so the caller can retry.
+                report.failed.extend(
+                    {"table_name": table, "column_name": c} for c in todo
                 )
-                if result is None:
-                    # LLM call failed — do not persist a junk row that would
-                    # block re-annotation; record it so the caller can retry.
-                    report.failed.append({"table_name": table, "column_name": column})
-                    continue
+                continue
+
+            table_desc = result.get("table_description")
+            if table_desc and ((table, self.TABLE_ROW) not in existing or force):
+                self._upsert_annotation(
+                    domain, table, self.TABLE_ROW, table_desc, 0.9, conn, force,
+                )
+
+            for column in todo:
+                col_result = result["columns"].get(column) or {
+                    "description": column.replace("_", " "), "confidence": 0.3,
+                }
                 self._upsert_annotation(
                     domain, table, column,
-                    result["description"], result["confidence"],
+                    col_result["description"], col_result["confidence"],
                     conn, force,
                 )
                 report.annotated += 1
-                if result["confidence"] < self.LOW_CONFIDENCE_THRESHOLD:
+                if col_result["confidence"] < self.LOW_CONFIDENCE_THRESHOLD:
                     report.low_confidence.append(
                         {"table_name": table, "column_name": column,
-                         "confidence": result["confidence"]}
+                         "confidence": col_result["confidence"]}
                     )
 
         return report
@@ -165,6 +186,56 @@ class MetadataAnnotationService:
             return []
         finally:
             conn.commit()
+
+    def _annotate_table(
+        self,
+        domain: str,
+        domain_description: str,
+        table: str,
+        columns: list[str],
+        conn,
+        schema: str = "public",
+    ) -> Optional[dict]:
+        """Annotate all given columns of a table in one LLM call.
+
+        Returns {"table_description": str|None, "columns": {name: {description,
+        confidence}}} — missing columns fall back at the call site. Returns
+        None if the LLM call itself failed (nothing should be persisted)."""
+        col_inputs = [
+            {"name": c, "samples": self._get_sample_values(table, c, conn, schema=schema)}
+            for c in columns
+        ]
+        prompt = build_table_annotation_prompt(
+            domain, domain_description, table, col_inputs
+        )
+
+        try:
+            resp = self._llm.messages_create(
+                system=self.ANNOTATION_SYSTEM,
+                messages=[{"role": "user", "content": prompt}],
+                tools=[],
+                max_tokens=max(1024, 200 * len(columns)),
+            )
+        except Exception as e:
+            logger.error(f"Annotation LLM call failed for table {table}: {e}")
+            return None
+
+        out: dict = {"table_description": None, "columns": {}}
+        try:
+            text = next((b.text for b in resp.content if hasattr(b, "text")), "{}")
+            data = json.loads(text.strip())
+            desc = str(data.get("table_description") or "").strip()
+            out["table_description"] = desc[: self.DESCRIPTION_MAX_CHARS] or None
+            for item in data.get("columns", []):
+                name = item.get("column_name")
+                if name in columns:
+                    out["columns"][name] = {
+                        "description": str(item.get("description", ""))[: self.DESCRIPTION_MAX_CHARS],
+                        "confidence": float(item.get("confidence", 0.5)),
+                    }
+        except Exception:
+            logger.warning(f"Could not parse table annotation response for {table}")
+        return out
 
     def _annotate_column(
         self,

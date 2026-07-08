@@ -252,18 +252,23 @@ def phase2_annotation(domain: str, tables: list[str], conn, schema: str = "publi
     llm = _build_llm_client()
     svc = MetadataAnnotationService(llm_client=llm)
 
-    # Wrap _annotate_column to print per-column progress
-    original_annotate = svc._annotate_column
+    # Wrap _annotate_table to print per-table progress
+    original_annotate = svc._annotate_table
 
-    def _annotating_with_progress(d, dd, table, column, conn_inner, db_schema="public"):
-        print(f"  {table}.{column:<30} ... ", end="", flush=True)
-        result = original_annotate(d, dd, table, column, conn_inner, db_schema)
-        conf = result.get("confidence", 0)
-        marker = "⚠ low confidence" if conf < 0.70 else "done"
-        print(f"{marker} (confidence={conf:.2f})")
+    def _annotating_with_progress(d, dd, table, columns, conn_inner, db_schema="public"):
+        print(f"  {table} ({len(columns)} columns) ... ", end="", flush=True)
+        result = original_annotate(d, dd, table, columns, conn_inner, db_schema)
+        if result is None:
+            print("⚠ LLM call failed — skipped (re-run to retry)")
+        else:
+            low = sum(
+                1 for c in columns
+                if result["columns"].get(c, {}).get("confidence", 0.3) < 0.70
+            )
+            print("done" + (f" ({low} low-confidence)" if low else ""))
         return result
 
-    svc._annotate_column = _annotating_with_progress
+    svc._annotate_table = _annotating_with_progress
 
     report = svc.run(domain, conn, tables=tables, schema=schema, force=force)
 

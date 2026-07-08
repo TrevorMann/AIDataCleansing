@@ -69,7 +69,9 @@ def test_list_gaps_empty_when_all_annotated():
 def test_run_annotates_gaps_and_returns_report():
     llm = MagicMock()
     llm.messages_create.return_value.content = [
-        MagicMock(text='{"description": "City name field", "confidence": 0.90}')
+        MagicMock(text='{"table_description": "Raw listings", "columns": '
+                       '[{"column_name": "city", "description": "City name field", '
+                       '"confidence": 0.90}]}')
     ]
     svc = MetadataAnnotationService(llm_client=llm)
     conn, cur = _mock_conn(
@@ -106,7 +108,8 @@ def test_run_skips_existing_when_not_forced():
 def test_run_flags_low_confidence():
     llm = MagicMock()
     llm.messages_create.return_value.content = [
-        MagicMock(text='{"description": "Unknown ref field", "confidence": 0.40}')
+        MagicMock(text='{"columns": [{"column_name": "ref_1", '
+                       '"description": "Unknown ref field", "confidence": 0.40}]}')
     ]
     svc = MetadataAnnotationService(llm_client=llm)
     conn, _ = _mock_conn(
@@ -243,3 +246,67 @@ def test_orchestration_team_no_warning_when_annotated(caplog):
         OrchestrationTeam(registry)
 
     assert not any("annotation" in msg.lower() for msg in caplog.messages)
+
+
+# --- table-level annotation (audit finding 2.1) ---
+
+def test_run_makes_one_llm_call_per_table_and_stores_table_row():
+    llm = MagicMock()
+    llm.messages_create.return_value.content = [MagicMock(text=json.dumps({
+        "table_description": "One row per property listing.",
+        "columns": [
+            {"column_name": "city", "description": "Municipality of the listing", "confidence": 0.9},
+            {"column_name": "price", "description": "Listing price in CAD", "confidence": 0.85},
+        ],
+    }))]
+    svc = MetadataAnnotationService(llm_client=llm)
+    conn, cur = _mock_conn(
+        [],  # existing annotations
+        [{"column_name": "city"}, {"column_name": "price"}],  # columns
+        [], [],  # samples for city, price
+    )
+    with patch("services.metadata_annotation.SeederRegistry") as mock_sr:
+        mock_sr.return_value.manifest = {"description": "Test domain"}
+        report = svc.run("test_domain", conn, tables=["raw_data"])
+
+    assert report.annotated == 2
+    assert llm.messages_create.call_count == 1  # one call for the whole table
+    upserted_cols = [c[0][1][2] for c in cur.execute.call_args_list
+                     if "INSERT INTO data_details.column_metadata" in c[0][0]]
+    assert MetadataAnnotationService.TABLE_ROW in upserted_cols
+
+
+def test_run_call_failure_marks_all_table_columns_failed():
+    llm = MagicMock()
+    llm.messages_create.side_effect = RuntimeError("down")
+    svc = MetadataAnnotationService(llm_client=llm)
+    conn, _ = _mock_conn(
+        [],
+        [{"column_name": "a"}, {"column_name": "b"}],
+        [], [],
+    )
+    with patch("services.metadata_annotation.SeederRegistry") as mock_sr:
+        mock_sr.return_value.manifest = {"description": "Test domain"}
+        report = svc.run("test_domain", conn, tables=["raw_data"])
+
+    assert report.annotated == 0
+    assert len(report.failed) == 2
+
+
+def test_missing_column_in_response_gets_low_confidence_fallback():
+    llm = MagicMock()
+    llm.messages_create.return_value.content = [MagicMock(text=json.dumps({
+        "columns": [{"column_name": "city", "description": "City", "confidence": 0.9}],
+    }))]
+    svc = MetadataAnnotationService(llm_client=llm)
+    conn, _ = _mock_conn(
+        [],
+        [{"column_name": "city"}, {"column_name": "mystery"}],
+        [], [],
+    )
+    with patch("services.metadata_annotation.SeederRegistry") as mock_sr:
+        mock_sr.return_value.manifest = {"description": "Test domain"}
+        report = svc.run("test_domain", conn, tables=["raw_data"])
+
+    assert report.annotated == 2
+    assert [lc["column_name"] for lc in report.low_confidence] == ["mystery"]
