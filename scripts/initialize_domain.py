@@ -10,6 +10,7 @@ Usage:
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
 from typing import Optional
@@ -17,7 +18,6 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from services.domain_initializer import DomainInitializer, SYSTEM_TABLES
-from llm_client_factory import create_client
 from seeders.domain_researcher import DomainResearcher
 from seeders.registry import SeederRegistry
 from pathlib import Path as _Path
@@ -313,10 +313,23 @@ def phase3_seed_research(domain: str, schema: dict, conn) -> None:
             print(f"  hint: {q.hint}")
         answers[q.key] = input(f"{q.prompt}\n> ").strip()
 
+    # Live web grounding — prefer current facts over model memory when a
+    # Tavily key is available. Best-effort; skipped silently without a key.
+    web_context = ""
+    if os.getenv("TAVILY_API_KEY"):
+        print("\nGathering web research to ground the seed content...")
+        try:
+            from cleaning.cache import WebSearchCache
+            from seeders.domain_researcher import gather_web_context
+            web_context = gather_web_context(domain, answers, WebSearchCache())
+            print(f"  {len(web_context)} chars of search snippets gathered")
+        except Exception as e:
+            print(f"  ⚠ web grounding skipped: {e}")
+
     print("\nConnecting to LLM to generate seed content...")
     try:
-        client, _backend, model = create_client()
-    except EnvironmentError as e:
+        llm = _build_llm_client(tier="standard")
+    except ValueError as e:
         print(f"\nERROR: {e}")
         sys.exit(1)
 
@@ -325,8 +338,8 @@ def phase3_seed_research(domain: str, schema: dict, conn) -> None:
         schema=schema,
         annotations=annotations,
         data_samples=samples,
-        llm_client=client,
-        model=model,
+        llm=llm,
+        web_context=web_context,
     )
 
     print("\n" + "─" * 50)
@@ -493,9 +506,9 @@ def cmd_refresh_seeds(domain: str, initializer: DomainInitializer, conn) -> None
 
 # ── main ──────────────────────────────────────────────────────────────────────
 
-def _build_llm_client():
-    from cleaning.llm_client import build_clients
-    return build_clients().fast
+def _build_llm_client(tier: str = "fast"):
+    from cleaning.llm_client import build_client_for_tier
+    return build_client_for_tier(tier)
 
 
 def main() -> None:
