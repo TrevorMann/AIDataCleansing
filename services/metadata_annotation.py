@@ -22,6 +22,7 @@ class AnnotationReport:
     annotated: int = 0
     skipped: int = 0
     low_confidence: list = field(default_factory=list)  # [{table_name, column_name, confidence}]
+    failed: list = field(default_factory=list)  # [{table_name, column_name}] — LLM call failed, nothing persisted
 
 
 class MetadataAnnotationService:
@@ -97,6 +98,11 @@ class MetadataAnnotationService:
                 result = self._annotate_column(
                     domain, domain_description, table, column, conn, schema
                 )
+                if result is None:
+                    # LLM call failed — do not persist a junk row that would
+                    # block re-annotation; record it so the caller can retry.
+                    report.failed.append({"table_name": table, "column_name": column})
+                    continue
                 self._upsert_annotation(
                     domain, table, column,
                     result["description"], result["confidence"],
@@ -168,7 +174,10 @@ class MetadataAnnotationService:
         column: str,
         conn,
         schema: str = "public",
-    ) -> dict:
+    ) -> Optional[dict]:
+        """Annotate one column. Returns None if the LLM call itself failed
+        (nothing should be persisted); returns a low-confidence fallback when
+        the LLM answered but the response could not be parsed."""
         samples = self._get_sample_values(table, column, conn, schema=schema)
         prompt = build_annotation_prompt(domain, domain_description, table, column, samples)
 
@@ -179,6 +188,11 @@ class MetadataAnnotationService:
                 tools=[],
                 max_tokens=256,
             )
+        except Exception as e:
+            logger.error(f"Annotation LLM call failed for {table}.{column}: {e}")
+            return None
+
+        try:
             text = next((b.text for b in resp.content if hasattr(b, "text")), "{}")
             result = json.loads(text.strip())
             return {

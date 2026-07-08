@@ -210,7 +210,19 @@ class OrchestrationTeam:
         processed = []
 
         for record in records:
-            cleaned, audit = self.process_record(record)
+            try:
+                cleaned, audit = self.process_record(record)
+            except Exception as e:
+                # One bad record must not lose the rest of the batch.
+                logger.error("process_record failed for id=%s: %s", record.get("id"), e)
+                cleaned = dict(record)
+                cleaned["_error"] = str(e)
+                audit = [{
+                    "skill": "OrchestrationTeam",
+                    "decision": f"Record {record.get('id')} failed",
+                    "reason": str(e),
+                    "confidence": 0.0,
+                }]
             processed.append(cleaned)
             all_audit.extend(audit)
 
@@ -254,8 +266,19 @@ def run_cleaning_workflow_v2(
             for i, r in enumerate(processed_records):
                 print(f"  [{i+1}/{len(records)}] id={r.get('id')} route={r.get('_triage_route')}")
 
+        routes: Dict[str, int] = {}
+        errors = []
+        for r in processed_records:
+            route = r.get("_triage_route")
+            if route:
+                routes[route] = routes.get(route, 0) + 1
+            if r.get("_error"):
+                errors.append({"id": r.get("id"), "error": r["_error"]})
+        flagged_count = sum(n for route, n in routes.items() if route != "done")
+
         summary_text = (
             f"Cleaned {len(processed_records)}/{len(records)} records. "
+            f"Routes: {routes or 'n/a'}. {len(errors)} errors. "
             f"{len(audit_log)} audit entries. "
             f"Total: {sum(timing.values()):.2f}s."
         )
@@ -263,12 +286,12 @@ def run_cleaning_workflow_v2(
         return CleaningRunReport(
             records_processed=len(records),
             cleaned_count=len(processed_records),
-            flagged_count=0,
-            flags_by_type={},
+            flagged_count=flagged_count,
+            flags_by_type=routes,
             cache_stats={"hits": 0, "misses": 0, "pg_hits": 0, "queries_cached": 0},
             timing=timing,
             flag_summary=[],
-            errors=[],
+            errors=errors,
             summary_text=summary_text,
             audit_log=audit_log,
         )

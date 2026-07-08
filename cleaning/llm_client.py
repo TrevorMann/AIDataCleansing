@@ -58,6 +58,20 @@ class LLMUnavailableError(RuntimeError):
     """Raised when an LLM call fails after retries."""
 
 
+def _log_usage(model: str, usage: Any) -> None:
+    """Log token usage + cache metrics for every LLM call (cost tracking)."""
+    if usage is None:
+        return
+    logger.info(
+        "[%s] input=%s cache_creation=%s cache_read=%s output=%s",
+        model,
+        getattr(usage, "input_tokens", "?"),
+        getattr(usage, "cache_creation_input_tokens", 0),
+        getattr(usage, "cache_read_input_tokens", 0),
+        getattr(usage, "output_tokens", "?"),
+    )
+
+
 @dataclass
 class LLMClient:
     sdk: Anthropic
@@ -79,13 +93,15 @@ class LLMClient:
         last_exc: Exception | None = None
         for attempt in range(3):
             try:
-                return self.sdk.messages.create(
+                resp = self.sdk.messages.create(
                     model=self.model,
                     max_tokens=max_tokens,
                     system=sys_arg,
                     messages=messages,
                     tools=tools_arg,
                 )
+                _log_usage(self.model, getattr(resp, "usage", None))
+                return resp
             except (ConnectionError, TimeoutError, AnthropicRateLimitError) as e:
                 last_exc = e
                 if attempt < 2:

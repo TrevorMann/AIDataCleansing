@@ -11,6 +11,7 @@ This module contains all testable logic.
 
 import csv
 import json
+import logging
 import re
 import textwrap
 from dataclasses import dataclass, field
@@ -18,6 +19,20 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import yaml
+
+logger = logging.getLogger(__name__)
+
+
+def _log_usage(model: str, usage: Any) -> None:
+    """Log token usage for cost tracking (every messages.create call)."""
+    if usage is None:
+        return
+    logger.info(
+        "[%s] input=%s output=%s",
+        model,
+        getattr(usage, "input_tokens", "?"),
+        getattr(usage, "output_tokens", "?"),
+    )
 
 
 # ── data structures ───────────────────────────────────────────────────────────────
@@ -273,6 +288,7 @@ class DomainResearcher:
             max_tokens=4096,
             messages=[{"role": "user", "content": prompt}],
         )
+        _log_usage(model, getattr(response, "usage", None))
         text_block = next(
             (block for block in response.content if hasattr(block, "text")),
             None,
@@ -472,6 +488,7 @@ class DomainResearcher:
             max_tokens=4096,
             messages=[{"role": "user", "content": prompt}],
         )
+        _log_usage(model, getattr(response, "usage", None))
         text_block = next(
             (block for block in response.content if hasattr(block, "text")), None
         )
