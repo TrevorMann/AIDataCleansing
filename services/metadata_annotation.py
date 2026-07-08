@@ -10,7 +10,7 @@ from typing import Any, Optional
 
 from psycopg import sql
 
-from prompts.annotation import build_annotation_prompt, build_table_annotation_prompt
+from prompts.annotation import build_table_annotation_prompt
 from seeders.registry import SeederRegistry
 
 logger = logging.getLogger(__name__)
@@ -236,42 +236,6 @@ class MetadataAnnotationService:
         except Exception:
             logger.warning(f"Could not parse table annotation response for {table}")
         return out
-
-    def _annotate_column(
-        self,
-        domain: str,
-        domain_description: str,
-        table: str,
-        column: str,
-        conn,
-        schema: str = "public",
-    ) -> Optional[dict]:
-        """Annotate one column. Returns None if the LLM call itself failed
-        (nothing should be persisted); returns a low-confidence fallback when
-        the LLM answered but the response could not be parsed."""
-        samples = self._get_sample_values(table, column, conn, schema=schema)
-        prompt = build_annotation_prompt(domain, domain_description, table, column, samples)
-
-        try:
-            resp = self._llm.messages_create(
-                system=self.ANNOTATION_SYSTEM,
-                messages=[{"role": "user", "content": prompt}],
-                tools=[],
-                max_tokens=256,
-            )
-        except Exception as e:
-            logger.error(f"Annotation LLM call failed for {table}.{column}: {e}")
-            return None
-
-        try:
-            text = next((b.text for b in resp.content if hasattr(b, "text")), "{}")
-            result = json.loads(text.strip())
-            return {
-                "description": str(result.get("description", ""))[:120],
-                "confidence": float(result.get("confidence", 0.5)),
-            }
-        except Exception:
-            return {"description": column.replace("_", " "), "confidence": 0.3}
 
     def _upsert_annotation(
         self,

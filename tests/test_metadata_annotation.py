@@ -4,26 +4,28 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from prompts.annotation import build_annotation_prompt
+from prompts.annotation import build_table_annotation_prompt
 
 
-def test_build_annotation_prompt_contains_all_inputs():
-    prompt = build_annotation_prompt(
+def test_build_table_annotation_prompt_contains_all_inputs():
+    prompt = build_table_annotation_prompt(
         domain="real_estate",
         domain_description="Real estate property listings — Toronto/Canada focus",
         table_name="raw_data",
-        column_name="postal_code",
-        sample_values=["M5V 2T6", "K1A 0A9"],
+        columns=[{"name": "postal_code", "samples": ["M5V 2T6", "K1A 0A9"]},
+                 {"name": "city", "samples": []}],
     )
     assert "real_estate" in prompt
     assert "Real estate property listings" in prompt
     assert "raw_data" in prompt
     assert "postal_code" in prompt
     assert "M5V 2T6" in prompt
+    assert "table_description" in prompt
 
 
-def test_build_annotation_prompt_empty_samples_says_none():
-    prompt = build_annotation_prompt("test", "Test domain", "raw_data", "ref_1", [])
+def test_build_table_annotation_prompt_empty_samples_says_none():
+    prompt = build_table_annotation_prompt("test", "Test domain", "raw_data",
+                                           [{"name": "ref_1", "samples": []}])
     assert "ref_1" in prompt
     assert "none available" in prompt
 
@@ -280,7 +282,7 @@ def test_run_call_failure_marks_all_table_columns_failed():
     llm = MagicMock()
     llm.messages_create.side_effect = RuntimeError("down")
     svc = MetadataAnnotationService(llm_client=llm)
-    conn, _ = _mock_conn(
+    conn, cur = _mock_conn(
         [],
         [{"column_name": "a"}, {"column_name": "b"}],
         [], [],
@@ -291,6 +293,10 @@ def test_run_call_failure_marks_all_table_columns_failed():
 
     assert report.annotated == 0
     assert len(report.failed) == 2
+    # nothing was persisted — no junk rows blocking re-annotation
+    inserts = [c for c in cur.execute.call_args_list
+               if "INSERT INTO data_details.column_metadata" in str(c)]
+    assert inserts == []
 
 
 def test_missing_column_in_response_gets_low_confidence_fallback():
