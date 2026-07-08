@@ -131,6 +131,12 @@ class OrchestrationTeam:
                             merged[k] = v
             record = merged
 
+        # Snapshot after the deterministic phase — corrections learning
+        # compares against this so phase-1 output is never re-learned.
+        learn_fields = self._learnable_text_fields()
+        if learn_fields:
+            record["_post_deterministic"] = {f: record.get(f) for f in learn_fields}
+
         # Phase 2: Initial triage
         if self.triage_skill:
             record, entries = self._run_skill(self.triage_skill, record)
@@ -221,6 +227,36 @@ class OrchestrationTeam:
 
         return record, audit_log
 
+    def _learnable_text_fields(self) -> List[str]:
+        """Text fields eligible for corrections learning (spell checker config)."""
+        spell = self.registry.get("spell_checker")
+        return list(getattr(spell, "text_fields", []) or [])
+
+    def _learn_corrections(self, processed: List[Dict], all_audit: List) -> None:
+        """Propose spell_corrections rows from post-deterministic changes."""
+        conn = self.registry.runtime.get("pg_conn") if hasattr(self.registry, "runtime") else None
+        domain = getattr(self.registry, "domain", None)
+        fields = self._learnable_text_fields()
+
+        proposals = []
+        for record in processed:
+            snapshot = record.pop("_post_deterministic", None)
+            if snapshot and conn and domain and not record.get("_error"):
+                from cleaning.corrections_learner import propose_corrections
+                proposals.extend(propose_corrections(snapshot, record, fields))
+
+        if not (proposals and conn and domain):
+            return
+        from cleaning.corrections_learner import record_learned_corrections
+        written = record_learned_corrections(conn, domain, proposals)
+        if written:
+            all_audit.append({
+                "skill": "OrchestrationTeam",
+                "decision": f"Learned {written} new spell correction(s)",
+                "reason": f"post-deterministic changes: {[p['wrong'] for p in proposals]}",
+                "confidence": 0.75,
+            })
+
     def process_batch(self, records: List[Dict[str, Any]]) -> Tuple[List[Dict], List]:
         """Process a batch. Runs record_linker.link_batch() after per-record pass."""
         all_audit = []
@@ -249,6 +285,9 @@ class OrchestrationTeam:
             # link_batch assigns _group_id to each record but generates no audit entries —
             # the linkage outcome is readable from record["_group_id"].
             processed = record_linker.link_batch(processed)
+
+        # Self-learning: feed enrichment-made fixes back to spell_corrections
+        self._learn_corrections(processed, all_audit)
 
         return processed, all_audit
 
