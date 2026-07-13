@@ -207,9 +207,12 @@ You still wire skills manually after initialization:
 - Declare seeders in `seeders/sports_ticketing/manifest.yaml`.
 
 **Lower-level scripts** (still independently runnable; `initialize_domain.py` orchestrates them):
-`scripts/scaffold_domain.py`, `scripts/research_domain.py`, `scripts/init_data.py`,
-`scripts/annotate_domain.py`. `annotate_domain.py` now requires the domain's tables to be
-registered first (it reads them from `domain_registry.json`).
+`scripts/scaffold_domain.py`, `scripts/init_data.py`, `scripts/annotate_domain.py`.
+`annotate_domain.py` now requires the domain's tables to be registered first (it reads
+them from `domain_registry.json`). Seed research (Q&A + LLM → seed files) is
+`initialize_domain.py` Phase 3, or `--refresh-seeds` to re-run it standalone — there is
+no separate `research_domain.py` script anymore; it was consolidated into the
+schema-aware, tiered-LLM, web-grounded Phase 3 flow.
 
 ## Architecture
 

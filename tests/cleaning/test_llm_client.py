@@ -37,6 +37,27 @@ def test_unknown_backend_raises(monkeypatch):
         build_clients()
 
 
+def test_bedrock_backend_uses_configured_model_id(monkeypatch):
+    from cleaning.llm_client import build_clients
+    monkeypatch.setenv("LLM_BACKEND_DEFAULT", "bedrock-haiku")
+    monkeypatch.setenv("BEDROCK_HAIKU_MODEL_ID", "anthropic.claude-haiku-4-5-v1:0")
+    monkeypatch.setenv("AWS_REGION", "us-east-1")
+    with patch("cleaning.llm_client.AnthropicBedrock") as mock_bedrock_cls:
+        mock_bedrock_cls.return_value = MagicMock()
+        clients = build_clients()
+    mock_bedrock_cls.assert_called_with(aws_region="us-east-1", aws_profile=None)
+    assert clients.fast.model == "anthropic.claude-haiku-4-5-v1:0"
+    assert clients.fast.supports_cache_control is True
+
+
+def test_bedrock_backend_missing_model_id_raises(monkeypatch):
+    from cleaning.llm_client import build_clients
+    monkeypatch.setenv("LLM_BACKEND_DEFAULT", "bedrock-sonnet")
+    monkeypatch.delenv("BEDROCK_SONNET_MODEL_ID", raising=False)
+    with pytest.raises(ValueError, match="BEDROCK_SONNET_MODEL_ID not set"):
+        build_clients()
+
+
 def test_messages_create_calls_sdk_with_args():
     from cleaning.llm_client import LLMClient
     sdk = MagicMock()

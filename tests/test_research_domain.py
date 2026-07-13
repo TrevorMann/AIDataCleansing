@@ -4,114 +4,18 @@ import csv
 import json
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 import yaml
 
 from seeders.domain_researcher import (
     DomainResearcher,
-    Question,
     ResearchBundle,
     SpellCorrection,
     QueryPack,
     ColumnDescription,
 )
-
-
-# ── questionnaire structure ──────────────────────────────────────────────────────
-
-class TestQuestionnaire:
-    def test_researcher_has_questions(self):
-        r = DomainResearcher(domain="test_domain")
-        assert len(r.questions) >= 5
-
-    def test_each_question_has_key_and_prompt(self):
-        r = DomainResearcher(domain="test_domain")
-        for q in r.questions:
-            assert isinstance(q, Question)
-            assert q.key, "Question must have a non-empty key"
-            assert q.prompt, "Question must have a non-empty prompt"
-            assert "?" in q.prompt, "Prompt should be a question"
-
-    def test_questions_cover_entity_type(self):
-        r = DomainResearcher(domain="test_domain")
-        keys = {q.key for q in r.questions}
-        assert "entity_description" in keys
-
-    def test_questions_cover_fields(self):
-        r = DomainResearcher(domain="test_domain")
-        keys = {q.key for q in r.questions}
-        assert "fields" in keys
-
-    def test_questions_cover_text_fields(self):
-        r = DomainResearcher(domain="test_domain")
-        keys = {q.key for q in r.questions}
-        assert "text_fields" in keys
-
-    def test_questions_cover_linking_fields(self):
-        r = DomainResearcher(domain="test_domain")
-        keys = {q.key for q in r.questions}
-        assert "linking_fields" in keys
-
-    def test_questions_cover_gap_types(self):
-        r = DomainResearcher(domain="test_domain")
-        keys = {q.key for q in r.questions}
-        assert "gap_types" in keys
-
-    def test_questions_cover_trusted_sources(self):
-        r = DomainResearcher(domain="test_domain")
-        keys = {q.key for q in r.questions}
-        assert "trusted_sources" in keys
-
-
-# ── LLM prompt construction ──────────────────────────────────────────────────────
-
-class TestBuildPrompt:
-    def _answers(self):
-        return {
-            "entity_description": "sports event tickets",
-            "fields": "event_id, team_name, venue_name, event_date, ticket_type",
-            "text_fields": "venue_name, team_name",
-            "linking_fields": "event_id, venue_name + team_name + event_date",
-            "gap_types": "missing venue address, unknown team name",
-            "trusted_sources": "espn.com, ticketmaster.com, seatgeek.com",
-        }
-
-    def test_prompt_includes_domain_name(self):
-        r = DomainResearcher(domain="sports_ticketing")
-        prompt = r.build_llm_prompt(self._answers())
-        assert "sports_ticketing" in prompt
-
-    def test_prompt_includes_entity_description(self):
-        r = DomainResearcher(domain="sports_ticketing")
-        prompt = r.build_llm_prompt(self._answers())
-        assert "sports event tickets" in prompt
-
-    def test_prompt_includes_field_names(self):
-        r = DomainResearcher(domain="sports_ticketing")
-        prompt = r.build_llm_prompt(self._answers())
-        assert "venue_name" in prompt
-
-    def test_prompt_requests_json_output(self):
-        r = DomainResearcher(domain="sports_ticketing")
-        prompt = r.build_llm_prompt(self._answers())
-        assert "JSON" in prompt or "json" in prompt
-
-    def test_prompt_requests_spell_corrections(self):
-        r = DomainResearcher(domain="sports_ticketing")
-        prompt = r.build_llm_prompt(self._answers())
-        assert "spell_corrections" in prompt
-
-    def test_prompt_requests_query_packs(self):
-        r = DomainResearcher(domain="sports_ticketing")
-        prompt = r.build_llm_prompt(self._answers())
-        assert "query_packs" in prompt
-
-    def test_prompt_requests_column_descriptions(self):
-        r = DomainResearcher(domain="sports_ticketing")
-        prompt = r.build_llm_prompt(self._answers())
-        assert "column_descriptions" in prompt
 
 
 # ── LLM response parsing ─────────────────────────────────────────────────────────
@@ -277,50 +181,6 @@ class TestWriteSeeds:
             assert existing.read_text() != "original content"
 
 
-# ── LLM integration (mocked) ─────────────────────────────────────────────────────
-
-class TestResearchWithMockedLLM:
-    def test_research_calls_llm_and_returns_bundle(self):
-        r = DomainResearcher(domain="sports_ticketing")
-        answers = {
-            "entity_description": "event tickets",
-            "fields": "event_id, venue_name",
-            "text_fields": "venue_name",
-            "linking_fields": "event_id",
-            "gap_types": "missing venue",
-            "trusted_sources": "ticketmaster.com",
-        }
-        mock_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.content = [MagicMock(text=_VALID_LLM_RESPONSE)]
-        mock_client.messages.create.return_value = mock_response
-
-        bundle = r.research(answers, llm_client=mock_client, model="claude-test")
-        assert isinstance(bundle, ResearchBundle)
-        assert len(bundle.spell_corrections) == 2
-        mock_client.messages.create.assert_called_once()
-
-    def test_research_prompt_passed_to_llm(self):
-        r = DomainResearcher(domain="sports_ticketing")
-        answers = {
-            "entity_description": "event tickets",
-            "fields": "venue_name",
-            "text_fields": "venue_name",
-            "linking_fields": "event_id",
-            "gap_types": "missing venue",
-            "trusted_sources": "ticketmaster.com",
-        }
-        mock_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.content = [MagicMock(text=_VALID_LLM_RESPONSE)]
-        mock_client.messages.create.return_value = mock_response
-
-        r.research(answers, llm_client=mock_client, model="claude-test")
-        call_kwargs = mock_client.messages.create.call_args
-        messages = call_kwargs[1]["messages"] if call_kwargs[1] else call_kwargs[0][1]
-        assert any("sports_ticketing" in str(m) for m in messages)
-
-
 import json as _json
 
 _SCHEMA = {
@@ -398,30 +258,6 @@ class TestGetFilteredQuestions:
         assert "team_aliases" not in keys
 
 
-class TestBuildSchemaPrompt:
-    def test_prompt_includes_schema_summary(self):
-        r = DomainResearcher(domain="sports_ticketing")
-        prompt = r.build_schema_prompt(_SCHEMA, _ANNOTATIONS, _SAMPLES, {})
-        assert "events" in prompt
-        assert "home_team" in prompt
-
-    def test_prompt_includes_annotation_descriptions(self):
-        r = DomainResearcher(domain="sports_ticketing")
-        prompt = r.build_schema_prompt(_SCHEMA, _ANNOTATIONS, _SAMPLES, {})
-        assert "Name of the sports event" in prompt
-
-    def test_prompt_includes_data_samples(self):
-        r = DomainResearcher(domain="sports_ticketing")
-        prompt = r.build_schema_prompt(_SCHEMA, _ANNOTATIONS, _SAMPLES, {})
-        assert "Leafs" in prompt or "Raptors" in prompt
-
-    def test_prompt_notes_empty_sample_columns(self):
-        r = DomainResearcher(domain="sports_ticketing")
-        prompt = r.build_schema_prompt(_SCHEMA, _ANNOTATIONS, _SAMPLES, {})
-        # postal_code has 0 samples — should be noted
-        assert "postal_code" in prompt
-
-
 class TestResearchWithSchema:
     def test_returns_research_bundle(self):
         r = DomainResearcher(domain="sports_ticketing")
@@ -463,6 +299,51 @@ class TestResearchWithSchema:
         messages = call_args[1].get("messages") or call_args[0][1]
         content = str(messages)
         assert "home_team" in content or "events" in content
+
+    def test_skips_spell_correction_llm_call_when_no_samples(self):
+        """No column anywhere has data — don't even ask the LLM for corrections,
+        so a prompt-instruction-ignoring model can't hallucinate any."""
+        r = DomainResearcher(domain="sports_ticketing")
+        empty_samples = {k: [] for k in _SAMPLES}
+        # A response with no "spell_corrections" key — simulates the LLM only ever
+        # being asked for query_packs/column_descriptions, never spell_corrections.
+        no_corrections_response = json.dumps({
+            k: v for k, v in json.loads(_VALID_LLM_RESPONSE).items()
+            if k != "spell_corrections"
+        })
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text=no_corrections_response)]
+        mock_client.messages.create.return_value = mock_response
+
+        bundle = r.research_with_schema(
+            answers={"gap_types": "x", "trusted_sources": "y", "industry_context": ""},
+            schema=_SCHEMA,
+            annotations=_ANNOTATIONS,
+            data_samples=empty_samples,
+            llm_client=mock_client,
+            model="test",
+        )
+        # only query_packs + column_descriptions calls, spell_corrections skipped
+        assert mock_client.messages.create.call_count == 2
+        assert bundle.spell_corrections == []
+
+    def test_still_generates_spell_corrections_when_any_column_has_samples(self):
+        r = DomainResearcher(domain="sports_ticketing")
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text=_VALID_LLM_RESPONSE)]
+        mock_client.messages.create.return_value = mock_response
+
+        r.research_with_schema(
+            answers={"gap_types": "x", "trusted_sources": "y", "industry_context": ""},
+            schema=_SCHEMA,
+            annotations=_ANNOTATIONS,
+            data_samples=_SAMPLES,  # home_team/event_name have samples, postal_code doesn't
+            llm_client=mock_client,
+            model="test",
+        )
+        assert mock_client.messages.create.call_count == 3
 
 
 # ── web grounding + tiered client (audit findings 1.1/1.2/1.4) ────────────────────
@@ -514,7 +395,7 @@ class TestWebGroundedResearch:
         llm.messages_create.return_value = resp
 
         bundle = r.research_with_schema(
-            answers={}, schema=_SCHEMA, annotations={}, data_samples={}, llm=llm,
+            answers={}, schema=_SCHEMA, annotations={}, data_samples=_SAMPLES, llm=llm,
         )
         assert isinstance(bundle, ResearchBundle)
         assert llm.messages_create.call_count == 3

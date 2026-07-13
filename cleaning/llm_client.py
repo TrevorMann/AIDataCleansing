@@ -16,7 +16,11 @@ from dataclasses import dataclass
 from typing import Any
 
 try:
-    from anthropic import Anthropic, RateLimitError as AnthropicRateLimitError
+    from anthropic import (
+        Anthropic,
+        AnthropicBedrock,
+        RateLimitError as AnthropicRateLimitError,
+    )
 except ModuleNotFoundError:
     class AnthropicRateLimitError(Exception):  # type: ignore[no-redef]
         """Stub for tests without the anthropic package."""
@@ -29,6 +33,8 @@ except ModuleNotFoundError:
             self.kwargs = kwargs
             self.messages = _AnthropicMessagesStub()
 
+    class AnthropicBedrock(Anthropic):  # type: ignore[no-redef]
+        """Minimal fallback used in tests when the anthropic package is absent."""
 
     class _AnthropicMessagesStub:
         def create(self, *args, **kwargs):
@@ -48,6 +54,15 @@ _BACKEND_TABLE = {
     "anthropic-haiku":  ("claude-haiku-4-5-20251001",     None,                        True),
     "anthropic-sonnet": ("claude-sonnet-4-6",             None,                        True),
     "anthropic-opus":   ("claude-opus-4-7",               None,                        True),
+}
+
+# Bedrock backend tokens → env var holding the account/region-specific model ID.
+# Unlike _BACKEND_TABLE, the model ID isn't hardcoded here since Bedrock model
+# IDs vary by AWS account and region.
+_BEDROCK_MODEL_ENV = {
+    "bedrock-haiku":  "BEDROCK_HAIKU_MODEL_ID",
+    "bedrock-sonnet": "BEDROCK_SONNET_MODEL_ID",
+    "bedrock-opus":   "BEDROCK_OPUS_MODEL_ID",
 }
 
 
@@ -135,9 +150,18 @@ class Clients:
 
 
 def _build_one(backend_token: str) -> LLMClient:
+    if backend_token in _BEDROCK_MODEL_ENV:
+        env_var = _BEDROCK_MODEL_ENV[backend_token]
+        model = os.getenv(env_var)
+        if not model:
+            raise ValueError(f"{env_var} not set; required for backend {backend_token!r}")
+        sdk = AnthropicBedrock(aws_region=os.getenv("AWS_REGION"),
+                                aws_profile=os.getenv("AWS_PROFILE"))
+        return LLMClient(sdk=sdk, model=model, supports_cache_control=True, base_url=None)
+
     if backend_token not in _BACKEND_TABLE:
         raise ValueError(f"Unknown LLM backend: {backend_token!r}. "
-                         f"Valid: {sorted(_BACKEND_TABLE)}")
+                         f"Valid: {sorted(list(_BACKEND_TABLE) + list(_BEDROCK_MODEL_ENV))}")
     model, base_url, cache = _BACKEND_TABLE[backend_token]
 
     api_key = (os.getenv("OPENROUTER_API_KEY")

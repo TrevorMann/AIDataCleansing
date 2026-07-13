@@ -133,7 +133,7 @@ domain must be registered (Phase 0, or `initialize_domain.py`) first.
 
 ```bash
 python scripts/scaffold_domain.py --domain sports_ticketing     # skeleton dirs/files
-python scripts/research_domain.py --domain sports_ticketing     # Q&A + LLM → seed files
+python scripts/initialize_domain.py --domain sports_ticketing --refresh-seeds  # Q&A + LLM → seed files
 python scripts/init_data.py --domain sports_ticketing --dry-run # preview seed load
 python scripts/init_data.py --domain sports_ticketing           # load seeds
 python scripts/annotate_domain.py --domain sports_ticketing     # annotate columns
@@ -409,9 +409,7 @@ print(report.summary_text)
 | `python scripts/annotate_domain.py --domain X --dry-run` | Show unannotated gaps |
 | `python scripts/annotate_domain.py --domain X --force` | Overwrite existing annotations |
 | `python scripts/scaffold_domain.py --domain X` | Scaffold new domain skeleton |
-| `python scripts/research_domain.py --domain X` | LLM-assisted seed generation via Q&A |
-| `python scripts/research_domain.py --domain X --dry-run` | Preview generated seeds without writing |
-| `python scripts/research_domain.py --domain X --force` | Regenerate and overwrite existing seeds |
+| `python scripts/initialize_domain.py --domain X --refresh-seeds` | LLM-assisted, schema-aware seed generation via Q&A |
 | `python -m pytest tests/ -v` | Full test suite (no DB/API keys needed) |
 
 ---

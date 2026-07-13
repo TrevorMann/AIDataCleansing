@@ -5,7 +5,7 @@ Asks structured questions about a domain, then calls the LLM to generate:
   - query_packs.yaml          — web search templates per gap type
   - column_metadata.yaml      — column descriptions and data types
 
-The interactive CLI lives in scripts/research_domain.py.
+The interactive CLI lives in scripts/initialize_domain.py (Phase 3 / --refresh-seeds).
 This module contains all testable logic.
 """
 
@@ -73,46 +73,6 @@ class ResearchBundle:
     query_packs: List[QueryPack] = field(default_factory=list)
     column_descriptions: List[ColumnDescription] = field(default_factory=list)
 
-
-# ── questionnaire ─────────────────────────────────────────────────────────────────
-
-_QUESTIONS = [
-    Question(
-        key="entity_description",
-        prompt="What kind of records does this domain clean?",
-        hint="e.g. sports event tickets, patient records, hotel bookings, job applications",
-    ),
-    Question(
-        key="fields",
-        prompt="What are the main data fields in a record? (comma-separated)",
-        hint="e.g. name, email, venue_name, event_date, ticket_type, price",
-    ),
-    Question(
-        key="text_fields",
-        prompt="Which fields contain free-text that may have spelling or capitalization errors?",
-        hint="e.g. venue_name, team_name, city, description — these feed the spell-correction seeder",
-    ),
-    Question(
-        key="linking_fields",
-        prompt="What fields uniquely identify a record, or help detect near-duplicates?",
-        hint="e.g. event_id  —or—  venue_name + home_team + event_date together",
-    ),
-    Question(
-        key="gap_types",
-        prompt="What data quality gaps typically require a web search to resolve?",
-        hint="e.g. missing venue address, unknown team abbreviation, ambiguous event date",
-    ),
-    Question(
-        key="trusted_sources",
-        prompt="Which authoritative websites should be searched for this domain? (comma-separated)",
-        hint="e.g. espn.com, ticketmaster.com, seatgeek.com, wikipedia.org",
-    ),
-    Question(
-        key="industry_context",
-        prompt="Any additional domain-specific context the LLM should know?",
-        hint="e.g. team names use 3-letter codes, venues have multiple common name variants — leave blank to skip",
-    ),
-]
 
 # ── schema-filtered question pool ─────────────────────────────────────────────
 
@@ -212,60 +172,6 @@ class DomainResearcher:
 
     def __init__(self, domain: str):
         self.domain = domain
-        self.questions: List[Question] = _QUESTIONS
-
-    # ── prompt building ───────────────────────────────────────────────────────────
-
-    def build_llm_prompt(self, answers: Dict[str, str]) -> str:
-        answers_text = "\n".join(
-            f"  {q.key}: {answers.get(q.key, '(not provided')}"
-            for q in self.questions
-        )
-
-        return textwrap.dedent(f"""
-            You are a data quality expert helping initialize a new data cleaning domain.
-
-            Domain: {self.domain}
-
-            The user answered these questions about their domain:
-            {answers_text}
-
-            Generate seed content for this domain. Respond with a single JSON object
-            (no markdown, no explanation outside JSON) with exactly these keys:
-
-            {{
-              "spell_corrections": [
-                {{"wrong": "misspelled", "right": "correct", "confidence": 0.95}},
-                ...  // 20-30 realistic misspellings for the text fields named above
-              ],
-              "query_packs": [
-                {{
-                  "gap_type": "gap_type_key",
-                  "seed_queries": [
-                    "query template using {{field_name}} placeholders",
-                    ...  // 2-4 templates per gap type
-                  ]
-                }},
-                ...  // one entry per gap type named above
-              ],
-              "column_descriptions": [
-                {{
-                  "column_name": "field_name",
-                  "description": "what this field contains",
-                  "example_values": ["example1", "example2"],
-                  "data_type": "text|date|phone|email|numeric|code"
-                }},
-                ...  // one entry per field named above
-              ]
-            }}
-
-            Rules:
-            - spell_corrections: focus on the text_fields named above
-            - gap_type keys must be valid Python identifiers (lowercase, underscores)
-            - {{field_name}} placeholders in seed_queries must match field names from above
-            - data_type must be exactly one of: text, date, phone, email, numeric, code
-            - confidence values must be 0.0-1.0
-        """).strip()
 
     # ── response parsing ──────────────────────────────────────────────────────────
 
@@ -313,32 +219,6 @@ class DomainResearcher:
             query_packs=packs,
             column_descriptions=columns,
         )
-
-    # ── LLM call ──────────────────────────────────────────────────────────────────
-
-    def research(
-        self,
-        answers: Dict[str, str],
-        llm_client: Any,
-        model: str,
-    ) -> ResearchBundle:
-        prompt = self.build_llm_prompt(answers)
-        response = llm_client.messages.create(
-            model=model,
-            max_tokens=4096,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        _log_usage(model, getattr(response, "usage", None))
-        text_block = next(
-            (block for block in response.content if hasattr(block, "text")),
-            None,
-        )
-        if text_block is None:
-            raise ValueError(
-                f"No text block found in LLM response. "
-                f"Block types received: {[type(b).__name__ for b in response.content]}"
-            )
-        return self.parse_llm_response(text_block.text)
 
     # ── file writing ──────────────────────────────────────────────────────────────
 
@@ -431,86 +311,6 @@ class DomainResearcher:
 
         questions.append(_Q_INDUSTRY_CONTEXT)
         return questions
-
-    def build_schema_prompt(
-        self,
-        schema: Dict[str, List[Dict]],
-        annotations: Dict[str, str],
-        data_samples: Dict[str, List],
-        answers: Dict[str, str],
-    ) -> str:
-        """Build LLM prompt grounded in schema, annotations, and actual data samples."""
-        schema_lines = []
-        for table, cols in schema.items():
-            schema_lines.append(f"\nTable: {table}")
-            for col in cols:
-                ann = annotations.get(f"{table}.{col['name']}", "")
-                ann_note = f"  — {ann}" if ann else ""
-                sample_key = f"{table}.{col['name']}"
-                samples = data_samples.get(sample_key, [])
-                if samples:
-                    sample_note = f"  [samples: {', '.join(str(s) for s in samples[:5])}]"
-                else:
-                    sample_note = "  [no data yet]"
-                schema_lines.append(
-                    f"  {col['name']} ({col['type']}){ann_note}{sample_note}"
-                )
-        schema_block = "\n".join(schema_lines)
-
-        answers_text = "\n".join(
-            f"  {k}: {v}" for k, v in answers.items() if v
-        )
-
-        return textwrap.dedent(f"""
-            You are a data quality expert helping initialize a new data cleaning domain.
-
-            Domain: {self.domain}
-
-            === ACTUAL DATABASE SCHEMA (use these exact column names) ===
-            {schema_block}
-
-            === USER CONTEXT ===
-            {answers_text}
-
-            Generate seed content for this domain. Use ONLY the column names shown above.
-            Respond with a single JSON object (no markdown, no explanation outside JSON)
-            with exactly these keys:
-
-            {{
-              "spell_corrections": [
-                {{"wrong": "misspelled", "right": "correct", "confidence": 0.95}},
-                ...  // 15-25 evidence-based corrections for text columns that have data samples above
-                     // SKIP columns with [no data yet] — do not guess
-              ],
-              "query_packs": [
-                {{
-                  "gap_type": "gap_type_key",
-                  "seed_queries": [
-                    "query template using {{field_name}} placeholders matching schema above",
-                    ...
-                  ]
-                }},
-                ...
-              ],
-              "column_descriptions": [
-                {{
-                  "column_name": "exact_column_name_from_schema",
-                  "description": "what this field contains",
-                  "example_values": ["example1", "example2"],
-                  "data_type": "text|date|phone|email|numeric|code"
-                }},
-                ...
-              ]
-            }}
-
-            Rules:
-            - spell_corrections: only for columns that have data samples shown above
-            - column names in column_descriptions must exactly match names in the schema above
-            - gap_type keys must be valid Python identifiers (lowercase, underscores)
-            - {{field_name}} placeholders in seed_queries must match column names from schema
-            - confidence values must be 0.0-1.0
-            - data_type must be exactly one of: text, date, phone, email, numeric, code
-        """).strip()
 
     # One LLM call per artifact so a large schema can't truncate the whole
     # bundle mid-JSON. Each spec: (json_key, task instructions).
@@ -614,8 +414,13 @@ class DomainResearcher:
         """
         context = self._schema_context(schema, annotations, data_samples, answers, web_context)
         bundle = ResearchBundle(domain=self.domain)
+        has_samples = any(len(v) > 0 for v in data_samples.values())
 
         for key, spec in self._ARTIFACT_SPECS.items():
+            if key == "spell_corrections" and not has_samples:
+                # No column has data to ground corrections in — don't even ask the
+                # LLM; a prompt instruction alone can't be trusted to prevent guesses.
+                continue
             prompt = (
                 f"{context}\n\n"
                 f"Generate the `{key}` seed content for this domain.\n"
