@@ -6,6 +6,8 @@ from typing import Dict, Optional
 
 from db.schema_config import get_framework_schema
 
+MIN_AUTO_APPLY_CONFIDENCE = 0.70
+
 
 def load_seed_corrections(conn, seed_file: str, domain: str, schema: str = None) -> int:
     """Load corrections from CSV into DB. Idempotent (ON CONFLICT DO NOTHING).
@@ -69,7 +71,8 @@ def get_corrections_dict(conn, domain: str, schema: str = None) -> Dict[str, str
 
     with conn.cursor() as cur:
         cur.execute(
-            f"SELECT wrong, right FROM {schema}.spell_corrections WHERE domain = %s",
-            (domain,),
+            f"SELECT wrong, right FROM {schema}.spell_corrections "
+            f"WHERE domain = %s AND (confidence IS NULL OR confidence >= %s)",
+            (domain, MIN_AUTO_APPLY_CONFIDENCE),
         )
         return {row[0]: row[1] for row in cur.fetchall()}

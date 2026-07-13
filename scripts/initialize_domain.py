@@ -17,6 +17,7 @@ from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from db.pii_columns import REDACTED, is_pii_column
 from services.domain_initializer import DomainInitializer, SYSTEM_TABLES
 from seeders.domain_researcher import DomainResearcher
 from seeders.registry import SeederRegistry
@@ -196,6 +197,8 @@ _TEXT_COLUMN_TYPES = frozenset({
     "text", "character varying", "varchar", "char", "character"
 })
 
+MIN_ANNOTATION_CONFIDENCE = 0.70
+
 
 def _sample_text_columns(
     schema: dict[str, list[dict]],
@@ -211,11 +214,14 @@ def _sample_text_columns(
             if col["type"].lower() not in _TEXT_COLUMN_TYPES:
                 continue
             key = f"{table}.{col['name']}"
+            if is_pii_column(col["name"]):
+                samples[key] = [REDACTED]
+                continue
             # Safe identifier quoting — table/column names come from the schema,
             # never interpolate them into the SQL string directly.
             query = sql.SQL(
                 "SELECT {c} AS val FROM {t} "
-                "WHERE {c} IS NOT NULL AND {c} != '' LIMIT %s"
+                "WHERE {c} IS NOT NULL AND {c} != '' ORDER BY random() LIMIT %s"
             ).format(c=sql.Identifier(col["name"]), t=sql.Identifier(table))
             try:
                 with conn.cursor() as cur:
@@ -232,8 +238,9 @@ def _load_annotations(domain: str, conn) -> dict[str, str]:
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT table_name, column_name, description "
-                "FROM data_details.column_metadata WHERE domain = %s AND description IS NOT NULL",
-                (domain,),
+                "FROM data_details.column_metadata WHERE domain = %s AND description IS NOT NULL "
+                "AND (confidence IS NULL OR confidence >= %s)",
+                (domain, MIN_ANNOTATION_CONFIDENCE),
             )
             return {
                 f"{row['table_name']}.{row['column_name']}": row["description"]

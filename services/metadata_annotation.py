@@ -10,6 +10,7 @@ from typing import Any, Optional
 
 from psycopg import sql
 
+from db.pii_columns import REDACTED, is_pii_column
 from prompts.annotation import build_table_annotation_prompt
 from seeders.registry import SeederRegistry
 
@@ -170,10 +171,15 @@ class MetadataAnnotationService:
             conn.commit()
 
     def _get_sample_values(self, table: str, column: str, conn, schema: str = "public", n: int = 5) -> list:
+        if is_pii_column(column):
+            return [REDACTED]
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    sql.SQL("SELECT {col} FROM {schema}.{t} WHERE {col} IS NOT NULL LIMIT %s").format(
+                    sql.SQL(
+                        "SELECT {col} FROM {schema}.{t} WHERE {col} IS NOT NULL "
+                        "ORDER BY random() LIMIT %s"
+                    ).format(
                         schema=sql.Identifier(schema), t=sql.Identifier(table), col=sql.Identifier(column)
                     ),
                     (n,),

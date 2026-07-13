@@ -12,6 +12,8 @@ from skills.base import BaseSkill
 class SkillPlanner(BaseSkill):
     """Plan which skills to run for a record, using LLM + plan cache."""
 
+    MIN_ANNOTATION_CONFIDENCE = 0.70
+
     PLANNER_SYSTEM = (
         "You orchestrate a data-cleaning pipeline for the {domain} domain.\n"
         "Given a record and a skill menu, output JSON only (no prose):\n"
@@ -109,8 +111,9 @@ class SkillPlanner(BaseSkill):
                 cur.execute(
                     f"SELECT table_name, column_name, description "
                     f"FROM {self.framework_schema}.column_metadata WHERE domain = %s "
+                    f"AND (confidence IS NULL OR confidence >= %s) "
                     f"ORDER BY table_name, column_name",
-                    (self.domain,),
+                    (self.domain, self.MIN_ANNOTATION_CONFIDENCE),
                 )
                 rows = cur.fetchall()
             if not rows:

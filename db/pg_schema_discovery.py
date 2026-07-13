@@ -3,6 +3,8 @@ from typing import Dict, List
 from db.pg_init import get_db_connection
 from db.schema_config import get_framework_schema
 
+MIN_ANNOTATION_CONFIDENCE = 0.70
+
 
 def get_available_schemas(db_path: str) -> List[str]:
     """List all non-system schemas in the database."""
@@ -107,8 +109,9 @@ def get_column_metadata(db_path: str, table_name: str, schema: str = None) -> Di
     try:
         cursor = conn.cursor()
         cursor.execute(
-            f"SELECT column_name, description FROM {schema}.column_metadata WHERE table_name = %s",
-            (table_name,),
+            f"SELECT column_name, description FROM {schema}.column_metadata "
+            f"WHERE table_name = %s AND (confidence IS NULL OR confidence >= %s)",
+            (table_name, MIN_ANNOTATION_CONFIDENCE),
         )
         return {row["column_name"]: row["description"] for row in cursor.fetchall() if row["description"]}
     except Exception:

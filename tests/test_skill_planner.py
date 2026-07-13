@@ -195,6 +195,24 @@ def test_build_prompt_includes_annotation_context():
     assert "CA/US postal code" in prompt
 
 
+def test_annotation_context_query_filters_low_confidence():
+    """SQL sent to the DB must exclude annotations below the confidence threshold."""
+    registry = SkillRegistry.load("real_estate")
+    planner = SkillPlanner()
+    planner.domain = "real_estate"
+
+    mock_conn = MagicMock()
+    cur = mock_conn.cursor.return_value.__enter__.return_value
+    cur.fetchall.return_value = []
+    planner.conn = mock_conn
+
+    planner._get_annotation_context()
+
+    executed_sql, params = cur.execute.call_args[0]
+    assert "confidence" in executed_sql
+    assert SkillPlanner.MIN_ANNOTATION_CONFIDENCE in params
+
+
 def test_build_prompt_skips_annotation_context_when_no_conn():
     """No DB conn → prompt still works, no annotation block."""
     registry = SkillRegistry.load("real_estate")

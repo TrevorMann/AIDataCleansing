@@ -316,3 +316,19 @@ def test_missing_column_in_response_gets_low_confidence_fallback():
 
     assert report.annotated == 2
     assert [lc["column_name"] for lc in report.low_confidence] == ["mystery"]
+
+
+def test_get_sample_values_redacts_pii_column_without_querying_db():
+    svc = MetadataAnnotationService(llm_client=MagicMock())
+    conn = MagicMock()
+    samples = svc._get_sample_values("raw_data", "email_address", conn)
+    assert samples == ["<redacted>"]
+    conn.cursor.assert_not_called()
+
+
+def test_get_sample_values_orders_by_random_for_non_pii_column():
+    svc = MetadataAnnotationService(llm_client=MagicMock())
+    conn, cur = _mock_conn([{"city": "Toronto"}])
+    svc._get_sample_values("raw_data", "city", conn)
+    executed_sql = cur.execute.call_args[0][0].as_string(None)
+    assert "ORDER BY random()" in executed_sql

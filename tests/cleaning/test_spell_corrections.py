@@ -82,6 +82,23 @@ def test_get_corrections_dict_returns_mapping():
     assert "real_estate" in mock_cur.execute.call_args[0][1]
 
 
+def test_get_corrections_dict_filters_by_min_confidence():
+    from cleaning.spell_corrections_data import MIN_AUTO_APPLY_CONFIDENCE
+
+    mock_cur = MagicMock()
+    mock_cur.__enter__ = lambda s: s
+    mock_cur.__exit__ = MagicMock(return_value=False)
+    mock_cur.fetchall.return_value = []
+    mock_conn = MagicMock()
+    mock_conn.cursor.return_value = mock_cur
+
+    get_corrections_dict(mock_conn, "real_estate")
+
+    executed_sql, params = mock_cur.execute.call_args[0]
+    assert "confidence" in executed_sql
+    assert MIN_AUTO_APPLY_CONFIDENCE in params
+
+
 # --- SpellChecker integration ---
 
 def test_spell_checker_no_conn_empty_corrections():

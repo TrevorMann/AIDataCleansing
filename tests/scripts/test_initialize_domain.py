@@ -237,6 +237,32 @@ class TestSampleTextColumns:
         samples = _sample_text_columns(schema, conn)
         assert "events.event_name" not in samples or samples.get("events.event_name") == []
 
+    def test_redacts_pii_column_without_querying_db(self):
+        from scripts.initialize_domain import _sample_text_columns
+
+        schema = {
+            "customers": [
+                {"name": "email", "type": "text", "notnull": False, "pk": False},
+            ]
+        }
+        conn = MagicMock()
+        samples = _sample_text_columns(schema, conn)
+        assert samples["customers.email"] == ["<redacted>"]
+        conn.cursor.assert_not_called()
+
+    def test_orders_by_random_for_non_pii_column(self):
+        from scripts.initialize_domain import _sample_text_columns
+
+        schema = {
+            "events": [{"name": "event_name", "type": "text", "notnull": False, "pk": False}]
+        }
+        conn = MagicMock()
+        cur = conn.cursor.return_value.__enter__.return_value
+        cur.fetchall.return_value = [{"val": "Leafs vs Sens"}]
+        _sample_text_columns(schema, conn)
+        executed_sql = cur.execute.call_args[0][0].as_string(None)
+        assert "ORDER BY random()" in executed_sql
+
 
 class TestLoadAnnotations:
     def test_returns_table_dot_column_keyed_dict(self):
@@ -259,6 +285,17 @@ class TestLoadAnnotations:
         conn.cursor.return_value.__enter__.return_value.execute.side_effect = Exception("DB error")
         result = _load_annotations("sports_ticketing", conn)
         assert result == {}
+
+    def test_query_filters_by_min_confidence(self):
+        from scripts.initialize_domain import MIN_ANNOTATION_CONFIDENCE, _load_annotations
+
+        conn = MagicMock()
+        cur = conn.cursor.return_value.__enter__.return_value
+        cur.fetchall.return_value = []
+        _load_annotations("sports_ticketing", conn)
+        executed_sql, params = cur.execute.call_args[0]
+        assert "confidence" in executed_sql
+        assert MIN_ANNOTATION_CONFIDENCE in params
 
 
 class TestPhase3:
